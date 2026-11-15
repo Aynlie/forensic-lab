@@ -352,7 +352,7 @@
       </div>
     </section>
 
-    <!-- 7. Image Viewer View (Step 3: zoom and pan only, display-only) -->
+    <!-- 7. Image Viewer View (Step 3: zoom/pan; Step 4A: calibration) -->
     <section id="view-viewer" class="view" hidden>
       <div class="card">
         <div class="view-header">
@@ -364,6 +364,7 @@
 
         <div class="viewer-stage" id="viewer-stage">
           <img id="viewer-image" alt="Original image being viewed" draggable="false">
+          <svg id="viewer-overlay" class="viewer-overlay" aria-hidden="true"></svg>
         </div>
 
         <div class="viewer-toolbar">
@@ -371,6 +372,96 @@
           <span class="viewer-zoom-label" id="viewer-zoom-label">1.0x</span>
           <button type="button" id="btn-viewer-zoom-in" class="btn btn-secondary btn-sm">Zoom In</button>
           <button type="button" id="btn-viewer-reset" class="btn btn-outline btn-sm">Reset</button>
+          <button type="button" id="btn-viewer-calibrate" class="btn btn-primary btn-sm">Calibrate</button>
+        </div>
+
+        <!-- Calibration Status & Actions Bar (Step 4A) -->
+        <div class="calibration-status-card" id="calibration-status-card">
+          <div class="calibration-status-header">
+            <div class="calibration-badge-group">
+              <span class="calibration-pill" id="calibration-pill">Not calibrated</span>
+              <span class="calibration-status-text" id="calibration-status-text">Calibration: Not calibrated</span>
+            </div>
+            <div class="calibration-actions-group">
+              <button type="button" id="btn-recalibrate" class="btn btn-secondary btn-sm" hidden>Recalibrate</button>
+              <button type="button" id="btn-clear-calibration" class="btn btn-danger-outline btn-sm" hidden>Clear Calibration</button>
+              <button type="button" id="btn-copy-calibration" class="btn btn-outline btn-sm" hidden>Copy calibration from another original</button>
+            </div>
+          </div>
+          <div id="calibration-details" class="calibration-details-text" hidden></div>
+        </div>
+
+        <!-- Calibration Mode Active Banner -->
+        <div id="calibration-prompt-banner" class="calibration-prompt-banner" hidden>
+          <div class="calibration-prompt-content">
+            <span class="calibration-prompt-step" id="calibration-prompt-step">Tap first reference point on image (0/2 points placed).</span>
+            <span class="calibration-prompt-hint">Tap or click to mark reference points. Drag to pan. Pinch or mouse wheel to zoom.</span>
+          </div>
+          <div class="calibration-prompt-actions">
+            <button type="button" id="btn-reset-points" class="btn btn-outline btn-sm" hidden>Reset Points</button>
+            <button type="button" id="btn-cancel-calibration" class="btn btn-secondary btn-sm">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Calibration Form (appears after two points are marked) -->
+        <form id="calibration-form" class="calibration-form-card" hidden novalidate>
+          <div class="calibration-form-header">
+            <h3>Reference Length Calibration</h3>
+            <span class="rule-badge">Two-Point Calibration</span>
+          </div>
+          <p class="form-hint">Enter the known physical length and unit corresponding to the marked reference points.</p>
+
+          <div id="calibration-warning" class="status-banner warning" hidden role="alert"></div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cal-known-length">Known Reference Length <span class="required" aria-hidden="true">*</span></label>
+              <input type="number" id="cal-known-length" class="form-control" step="any" min="0.00001" placeholder="e.g., 100">
+              <span class="error-msg" id="error-cal-known-length"></span>
+            </div>
+            <div class="form-group">
+              <label for="cal-unit">Unit <span class="required" aria-hidden="true">*</span></label>
+              <select id="cal-unit" class="form-control">
+                <option value="um">&micro;m (micrometers)</option>
+                <option value="mm">mm (millimeters)</option>
+                <option value="cm">cm (centimeters)</option>
+                <option value="in">in (inches)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="cal-reference-label">Reference Label / Description <span class="hint">(Optional)</span></label>
+            <input type="text" id="cal-reference-label" class="form-control" autocomplete="off" placeholder="e.g., Stage micrometer division, 1mm ruler division">
+          </div>
+
+          <div class="calibration-measured-distance" id="cal-measured-distance">
+            Measured Distance: 0.00 px
+          </div>
+
+          <div class="form-actions calibration-form-actions">
+            <button type="button" id="btn-cancel-cal-form" class="btn btn-secondary">Cancel</button>
+            <button type="button" id="btn-retap-points" class="btn btn-outline">Retap Points</button>
+            <button type="submit" id="btn-save-calibration" class="btn btn-primary">Save Calibration</button>
+          </div>
+        </form>
+
+        <!-- Copy Calibration Panel -->
+        <div id="copy-calibration-panel" class="copy-calibration-panel" hidden>
+          <div class="copy-panel-header">
+            <h3>Copy Calibration from Another Original</h3>
+          </div>
+          <p class="copy-warning-text"><strong>Confirmation required:</strong> Use only if the magnification and setup are identical.</p>
+
+          <div class="form-group">
+            <label for="copy-calibration-source">Select Calibrated Source Image <span class="required" aria-hidden="true">*</span></label>
+            <select id="copy-calibration-source" class="form-control"></select>
+          </div>
+
+          <div class="form-actions copy-panel-actions">
+            <button type="button" id="btn-cancel-copy" class="btn btn-secondary">Cancel</button>
+            <button type="button" id="btn-confirm-copy" class="btn btn-primary">Confirm Copy</button>
+          </div>
         </div>
 
         <p class="viewer-note">Drag to pan. Pinch or use the mouse wheel to zoom. Zoom and pan change the display only; the stored original image is never modified.</p>

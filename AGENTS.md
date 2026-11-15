@@ -57,8 +57,9 @@ Each sample record:
 - `collectionDate`, `collectionTime`, `collectionLocation`, `collectedBy`
 - `description?`, `notes?`
 - `mode` ("regular" | "microscopic")
-- `images`: original image(s) and separate annotated image(s)
-- `calibration`: reference used, pixels-per-unit, unit, date (or null)
+- `images`:
+  - `originals`: list of original image records `{ id, fileName, mode, blob, capturedAt, quality, calibration? }` (Note: calibration lives on each original image record: `{ referenceLabel, knownLength, unit, pixelDistance, pixelsPerMicrometer, calibratedAt, source: "two-point" | "copied", copiedFrom?, points? }`). Original image Blobs are never modified.
+  - `annotated`: list of separate annotated image copies
 - `measurements`: list of `{ type, value, unit, label }`
 - `observations`: list of `{ feature, value, label }` (label per rule 7)
 - `createdAt`, `updatedAt`
@@ -73,11 +74,12 @@ Dashboard with "New Examination" and "Saved Samples". Subject and Sample form wi
 **Step 2 — Mode selection and image capture/upload** — NEEDS TESTING
 Mode selection (Regular / Microscopic) shown after confirmation. Camera capture via the browser, gallery upload, preview, retake, and basic image quality check. Camera permission error handling. Positioning instructions. Original image saved separately.
 
-**Step 3 — Image viewer, zoom/pan only (crop postponed)** — NEEDS TESTING
+**Step 3 — Image viewer, zoom/pan only (crop postponed)** — COMPLETED
 Zoom and pan for saved original images (pinch, wheel, drag, Zoom In/Out/Reset buttons). Display only; stored originals are never modified. Crop is postponed unless time remains.
 
-**Step 4 — Calibration and measurement** — NOT STARTED
-Calibration: user marks two points on a known reference length, enters the real length and unit, app computes and saves pixels-per-unit. Measurement: two-point tap for hair length or shaft diameter. Unit conversion among µm, mm, cm, in. Clear "Calibrated measurement" vs "Estimate"/uncalibrated labeling.
+**Step 4 — Calibration and measurement** — IN PROGRESS
+Step 4A (IN PROGRESS): Calibration inside the existing Image Viewer. Two-point calibration on a known reference scale (stage micrometer or millimeter ruler), coordinate transformation from stage pixels to image pixels, pixelsPerMicrometer calculation with unit conversion (um, mm, cm, in), validation, low-precision warning (< 50 px), per-original-image calibration persistence in IndexedDB, and copy calibration across originals with confirmation line.
+Step 4B (NOT STARTED): Two-point measurement for hair length or shaft diameter, unit conversion (um, mm, cm, in), and clear "Calibrated measurement" vs "Estimate"/uncalibrated labeling.
 
 **Step 5 — Observations and color sampling** — NOT STARTED
 Regular mode: user selects a region; app reports the average color (real pixel math) and user picks visible pattern manually. Microscopic mode: manual checklists for cuticle, medulla (continuous / discontinuous / fragmented / absent / not clearly visible), cortex and pigmentation, root, tip. Each saved with a "Manually observed" label. Option for "Not observable".

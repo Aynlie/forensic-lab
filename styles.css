@@ -1073,6 +1073,227 @@ textarea.form-control {
   color: var(--color-text-muted);
 }
 
+/* Step 4A: Calibration Overlay & Tools */
+.viewer-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.viewer-stage.calibrating-mode {
+  cursor: crosshair;
+}
+
+.viewer-stage.calibrating-mode.grabbing {
+  cursor: grabbing;
+}
+
+.calibration-status-card {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.calibration-status-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.calibration-badge-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.calibration-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 9999px;
+  background-color: #f1f5f9;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.calibration-pill.calibrated {
+  background-color: var(--color-success-bg);
+  color: var(--color-success-text);
+  border-color: var(--color-success-border);
+}
+
+.calibration-status-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-main);
+}
+
+.calibration-details-text {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border-subtle);
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.calibration-actions-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.calibration-prompt-banner {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background-color: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.calibration-prompt-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.calibration-prompt-step {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.calibration-prompt-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.calibration-prompt-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.calibration-form-card {
+  margin-top: 14px;
+  padding: 16px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.calibration-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.calibration-form-header h3 {
+  font-size: 1rem;
+  margin: 0;
+  color: var(--color-primary);
+}
+
+.calibration-measured-distance {
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  background-color: #f8fafc;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-family: monospace;
+  color: var(--color-text-main);
+}
+
+.calibration-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.copy-calibration-panel {
+  margin-top: 14px;
+  padding: 16px;
+  background-color: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.copy-panel-header h3 {
+  font-size: 1rem;
+  margin: 0 0 8px 0;
+  color: var(--color-primary);
+}
+
+.copy-warning-text {
+  padding: 10px 12px;
+  background-color: #fffbeb;
+  border-left: 4px solid #f59e0b;
+  border-radius: var(--radius-sm);
+  color: #92400e;
+  font-size: 0.85rem;
+  margin-bottom: 14px;
+}
+
+.copy-panel-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-danger-outline {
+  background-color: transparent;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+}
+
+.btn-danger-outline:hover {
+  background-color: var(--color-danger-bg);
+}
+
+.status-banner.warning {
+  background-color: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.thumb-cal-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 0.68rem;
+  border-radius: 3px;
+  background-color: #f1f5f9;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.thumb-cal-badge.calibrated {
+  background-color: var(--color-success-bg);
+  color: var(--color-success-text);
+  border-color: var(--color-success-border);
+}
+
+.meta-cal-row {
+  margin-top: 2px;
+}
+
 /* Utility to toggle views */
 .view[hidden] {
   display: none !important;

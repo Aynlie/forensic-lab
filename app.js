@@ -3,6 +3,7 @@
  * Step 1: Subject & Sample Management with IndexedDB
  * Step 2: Mode Selection, Camera/Upload Image Capture & Basic Quality Check
  * Step 3: Image Viewer (zoom and pan only, display-only; crop postponed)
+ * Step 4A: Calibration inside Image Viewer (two-point reference calibration)
  * Pure Vanilla JavaScript - No external libraries
  */
 
@@ -853,7 +854,8 @@
       mode: activeSample.mode,
       blob: pendingImageData.blob, // Stored as Blob, not base64 string
       capturedAt: new Date().toISOString(),
-      quality: pendingImageData.quality
+      quality: pendingImageData.quality,
+      calibration: null
     };
 
     activeSample.images.originals.push(originalRecord);
@@ -884,6 +886,9 @@
     activeSample.images.originals.forEach((orig, index) => {
       const dateStr = new Date(orig.capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const modeLabel = orig.mode === 'microscopic' ? 'Micro' : 'Regular';
+      const calBadge = orig.calibration
+        ? '<span class="thumb-cal-badge calibrated">Calibrated</span>'
+        : '<span class="thumb-cal-badge">Uncalibrated</span>';
       html += `
         <div class="original-item">
           <span class="original-stamp">ORIGINAL #${index + 1}</span>
@@ -891,6 +896,7 @@
           <div class="original-meta">
             <div><strong>${modeLabel}</strong> &bull; ${escapeHtml(dateStr)}</div>
             <div>${escapeHtml(orig.quality ? orig.quality.resolution : 'Raw')}</div>
+            <div class="meta-cal-row">${calBadge}</div>
           </div>
         </div>
       `;
@@ -980,24 +986,66 @@
       });
   }
 
-  // --- Step 3: Image Viewer (zoom and pan only) ---
-  // The viewer only DISPLAYS a stored original. It never writes to IndexedDB
-  // and never changes the stored Blob (Rule 10).
+  // --- Step 3: Image Viewer & Step 4A: Calibration inside Viewer ---
+  // The viewer displays a stored original image without modifying the image Blob (Rule 10).
+  // Calibration records the physical scale (pixelsPerMicrometer) on each original image's record.
 
   const viewerStage = document.getElementById('viewer-stage');
   const viewerImage = document.getElementById('viewer-image');
+  const viewerOverlay = document.getElementById('viewer-overlay');
   const viewerInfo = document.getElementById('viewer-info');
   const viewerZoomLabel = document.getElementById('viewer-zoom-label');
   const btnViewerBack = document.getElementById('btn-viewer-back');
   const btnViewerZoomIn = document.getElementById('btn-viewer-zoom-in');
   const btnViewerZoomOut = document.getElementById('btn-viewer-zoom-out');
   const btnViewerReset = document.getElementById('btn-viewer-reset');
+  const btnViewerCalibrate = document.getElementById('btn-viewer-calibrate');
+
+  // Calibration status and action elements
+  const calibrationStatusCard = document.getElementById('calibration-status-card');
+  const calibrationPill = document.getElementById('calibration-pill');
+  const calibrationStatusText = document.getElementById('calibration-status-text');
+  const calibrationDetails = document.getElementById('calibration-details');
+  const btnRecalibrate = document.getElementById('btn-recalibrate');
+  const btnClearCalibration = document.getElementById('btn-clear-calibration');
+  const btnCopyCalibration = document.getElementById('btn-copy-calibration');
+
+  // Calibration interactive prompt elements
+  const calibrationPromptBanner = document.getElementById('calibration-prompt-banner');
+  const calibrationPromptStep = document.getElementById('calibration-prompt-step');
+  const btnResetPoints = document.getElementById('btn-reset-points');
+  const btnCancelCalibration = document.getElementById('btn-cancel-calibration');
+
+  // Calibration form elements
+  const calibrationForm = document.getElementById('calibration-form');
+  const calibrationWarning = document.getElementById('calibration-warning');
+  const calKnownLengthInput = document.getElementById('cal-known-length');
+  const calUnitSelect = document.getElementById('cal-unit');
+  const calReferenceLabelInput = document.getElementById('cal-reference-label');
+  const calMeasuredDistance = document.getElementById('cal-measured-distance');
+  const errorCalKnownLength = document.getElementById('error-cal-known-length');
+  const btnCancelCalForm = document.getElementById('btn-cancel-cal-form');
+  const btnRetapPoints = document.getElementById('btn-retap-points');
+
+  // Copy calibration panel elements
+  const copyCalibrationPanel = document.getElementById('copy-calibration-panel');
+  const copyCalibrationSource = document.getElementById('copy-calibration-source');
+  const btnCancelCopy = document.getElementById('btn-cancel-copy');
+  const btnConfirmCopy = document.getElementById('btn-confirm-copy');
 
   const VIEWER_MAX_SCALE = 8;     // up to 8 screen pixels per image pixel
   const VIEWER_BUTTON_STEP = 1.5; // zoom factor for the Zoom In / Zoom Out buttons
   const VIEWER_WHEEL_STEP = 1.15; // zoom factor per mouse wheel notch
 
-  // One state object so Step 4 (measurement) can map screen points to image pixels.
+  let currentViewerOrigIndex = -1; // index of currently open original in activeSample.images.originals
+  let pinchOccurredInViewer = false;
+
+  const calibrationState = {
+    isCalibrating: false, // true when user is placing points
+    points: []            // points in original natural image pixel coordinates: [{ x, y }]
+  };
+
+  // State object mapping screen points to image pixels
   const viewerState = {
     url: null,      // object URL of the image being shown
     natW: 0,        // natural image width in pixels
@@ -1008,7 +1056,7 @@
     ty: 0           // image top edge, in stage pixels
   };
 
-  const viewerPointers = new Map(); // active touch/mouse pointers: id -> {x, y}
+  const viewerPointers = new Map(); // active pointers: id -> { startX, startY, x, y, maxMove, isDrag }
 
   /** Keeps the image inside the stage: centered if smaller, edge-limited if larger. */
   function viewerClamp() {
@@ -1020,12 +1068,13 @@
     viewerState.ty = ih <= sh ? (sh - ih) / 2 : Math.min(0, Math.max(sh - ih, viewerState.ty));
   }
 
-  /** Applies the current scale and position to the displayed image. */
+  /** Applies the current scale and position to the displayed image and updates overlay. */
   function viewerApply() {
     viewerClamp();
     viewerImage.style.transform =
       'translate(' + viewerState.tx + 'px, ' + viewerState.ty + 'px) scale(' + viewerState.scale + ')';
     viewerZoomLabel.textContent = (viewerState.scale / viewerState.baseScale).toFixed(1) + 'x';
+    renderViewerOverlay();
   }
 
   /** Fits the whole image inside the stage (also used by Reset). */
@@ -1062,6 +1111,280 @@
     };
   }
 
+  /**
+   * Renders calibration points and line onto the SVG overlay.
+   * Coordinate transformation: stageX = tx + imgX * scale; stageY = ty + imgY * scale.
+   * Visual markers and line thickness stay at constant screen size during zoom/pan.
+   */
+  function renderViewerOverlay() {
+    if (!viewerOverlay) return;
+
+    const points = calibrationState.points;
+    if (!points || points.length === 0) {
+      viewerOverlay.innerHTML = '';
+      return;
+    }
+
+    const sw = viewerStage.clientWidth;
+    const sh = viewerStage.clientHeight;
+    viewerOverlay.setAttribute('viewBox', '0 0 ' + sw + ' ' + sh);
+
+    const screenPts = points.map((pt) => ({
+      sx: viewerState.tx + pt.x * viewerState.scale,
+      sy: viewerState.ty + pt.y * viewerState.scale
+    }));
+
+    let svgHtml = '';
+
+    // If two points exist, draw the connecting reference line
+    if (screenPts.length === 2) {
+      const p1 = screenPts[0];
+      const p2 = screenPts[1];
+      // Dark halo for contrast against light specimen fields
+      svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />';
+      // High-contrast bright dashed reference line
+      svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-dasharray="5,3" />';
+    }
+
+    // Draw markers for each point (constant screen size)
+    screenPts.forEach((pt, index) => {
+      const num = index + 1;
+      // Dark outer shadow
+      svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="9" fill="#0f172a" opacity="0.6" />';
+      // Contrasting colored ring
+      svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="7" fill="#1e3a8a" stroke="#ffffff" stroke-width="1.5" />';
+      // Center dot
+      svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="2" fill="#38bdf8" />';
+      // Crosshair guide ticks
+      svgHtml += '<line x1="' + (pt.sx - 13) + '" y1="' + pt.sy + '" x2="' + (pt.sx - 9) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+      svgHtml += '<line x1="' + (pt.sx + 9) + '" y1="' + pt.sy + '" x2="' + (pt.sx + 13) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+      svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy - 13) + '" x2="' + pt.sx + '" y2="' + (pt.sy - 9) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+      svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy + 9) + '" x2="' + pt.sx + '" y2="' + (pt.sy + 13) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+      // Marker label badge
+      const badgeX = pt.sx + 12;
+      const badgeY = pt.sy - 10;
+      svgHtml += '<rect x="' + badgeX + '" y="' + badgeY + '" width="16" height="15" rx="3" fill="#1e3a8a" stroke="#ffffff" stroke-width="1"/>';
+      svgHtml += '<text x="' + (badgeX + 8) + '" y="' + (badgeY + 11) + '" fill="#ffffff" font-size="10" font-family="sans-serif" font-weight="bold" text-anchor="middle">' + num + '</text>';
+    });
+
+    viewerOverlay.innerHTML = svgHtml;
+  }
+
+  /** Formats micrometers per pixel with clean precision. */
+  function formatUmPerPixel(ppm) {
+    if (!ppm || ppm <= 0) return '0';
+    const umPerPx = 1 / ppm;
+    if (umPerPx >= 100) return umPerPx.toFixed(1);
+    if (umPerPx >= 1) return umPerPx.toFixed(2);
+    if (umPerPx >= 0.01) return umPerPx.toFixed(3);
+    return umPerPx.toPrecision(3);
+  }
+
+  function hideCalibrationPrompt() {
+    if (calibrationPromptBanner) calibrationPromptBanner.hidden = true;
+  }
+
+  function hideCalibrationForm() {
+    if (calibrationForm) calibrationForm.hidden = true;
+  }
+
+  function hideCopyPanel() {
+    if (copyCalibrationPanel) copyCalibrationPanel.hidden = true;
+  }
+
+  /** Updates the calibration status bar, labels, and action button visibility in the viewer. */
+  function updateViewerCalibrationUI() {
+    if (currentViewerOrigIndex < 0 || !activeSample || !activeSample.images || !activeSample.images.originals) {
+      return;
+    }
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    if (!orig) return;
+
+    // Check if any OTHER original in this sample has a saved calibration
+    const otherCalibrated = activeSample.images.originals.some((item, idx) => idx !== currentViewerOrigIndex && item.calibration);
+
+    if (orig.calibration) {
+      const cal = orig.calibration;
+      const umStr = formatUmPerPixel(cal.pixelsPerMicrometer);
+      calibrationPill.textContent = 'Calibrated';
+      calibrationPill.classList.add('calibrated');
+      calibrationStatusText.textContent = 'Calibrated: 1 px = ' + umStr + ' um';
+
+      let detailsHtml = 'Scale: ' + cal.knownLength + ' ' + cal.unit + ' = ' + cal.pixelDistance.toFixed(1) + ' px';
+      if (cal.referenceLabel) {
+        detailsHtml += ' &bull; ' + escapeHtml(cal.referenceLabel);
+      }
+      if (cal.source === 'copied' && cal.copiedFrom) {
+        detailsHtml += ' &bull; Copied from ' + escapeHtml(cal.copiedFrom);
+      }
+      calibrationDetails.innerHTML = detailsHtml;
+      calibrationDetails.hidden = false;
+
+      btnRecalibrate.hidden = false;
+      btnClearCalibration.hidden = false;
+      btnCopyCalibration.hidden = !otherCalibrated;
+      btnViewerCalibrate.textContent = 'Recalibrate';
+    } else {
+      calibrationPill.textContent = 'Not calibrated';
+      calibrationPill.classList.remove('calibrated');
+      calibrationStatusText.textContent = 'Calibration: Not calibrated';
+      calibrationDetails.innerHTML = '';
+      calibrationDetails.hidden = true;
+
+      btnRecalibrate.hidden = true;
+      btnClearCalibration.hidden = true;
+      btnCopyCalibration.hidden = !otherCalibrated;
+      btnViewerCalibrate.textContent = 'Calibrate';
+    }
+  }
+
+  /** Initiates two-point calibration mode. */
+  function startCalibrationMode() {
+    if (currentViewerOrigIndex < 0) return;
+    calibrationState.isCalibrating = true;
+    calibrationState.points = [];
+    viewerStage.classList.add('calibrating-mode');
+
+    hideCalibrationForm();
+    hideCopyPanel();
+    renderViewerOverlay();
+
+    calibrationPromptStep.textContent = 'Tap first reference point on image (0/2 points placed).';
+    btnResetPoints.hidden = true;
+    calibrationPromptBanner.hidden = false;
+    showStatus('Calibration active: Tap first point along a known reference scale.', 'info');
+  }
+
+  /** Cancels two-point calibration mode and restores any existing calibration overlay. */
+  function cancelCalibrationMode() {
+    calibrationState.isCalibrating = false;
+    viewerStage.classList.remove('calibrating-mode');
+    hideCalibrationPrompt();
+    hideCalibrationForm();
+
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    if (orig && orig.calibration && Array.isArray(orig.calibration.points)) {
+      calibrationState.points = [
+        { x: orig.calibration.points[0].x, y: orig.calibration.points[0].y },
+        { x: orig.calibration.points[1].x, y: orig.calibration.points[1].y }
+      ];
+    } else {
+      calibrationState.points = [];
+    }
+    renderViewerOverlay();
+    showStatus('Calibration cancelled.', 'info');
+  }
+
+  /** Handles tap on the viewer stage in calibrate mode, converting to image pixels. */
+  function handleViewerTap(clientX, clientY) {
+    if (!calibrationState.isCalibrating) return;
+    if (!viewerState.natW || !viewerState.natH) return;
+
+    const rect = viewerStage.getBoundingClientRect();
+    const stageX = clientX - rect.left;
+    const stageY = clientY - rect.top;
+
+    // Convert stage coordinates to natural image pixel coordinates
+    const imgX = (stageX - viewerState.tx) / viewerState.scale;
+    const imgY = (stageY - viewerState.ty) / viewerState.scale;
+
+    // Check bounds: tap must land within the image
+    if (imgX < 0 || imgX > viewerState.natW || imgY < 0 || imgY > viewerState.natH) {
+      showStatus('Tap landed outside the image area. Please tap inside the image.', 'error');
+      return;
+    }
+
+    if (calibrationState.points.length === 0) {
+      // First point
+      calibrationState.points.push({ x: imgX, y: imgY });
+      renderViewerOverlay();
+      calibrationPromptStep.textContent = 'Point 1 placed at (' + Math.round(imgX) + ', ' + Math.round(imgY) + ' px). Tap second reference point (1/2 placed).';
+      btnResetPoints.hidden = false;
+      showStatus('Point 1 marked. Now tap the second reference point.', 'success');
+    } else if (calibrationState.points.length === 1) {
+      // Second point
+      const p1 = calibrationState.points[0];
+      const p2 = { x: imgX, y: imgY };
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+      // Rule 3: Reject points less than 3 px apart
+      if (dist < 3) {
+        showStatus('Points are too close (' + dist.toFixed(1) + ' px apart). Must be at least 3 px apart. Please tap the second point again.', 'error');
+        return;
+      }
+
+      calibrationState.points.push(p2);
+      renderViewerOverlay();
+
+      // Finish point placement mode
+      calibrationState.isCalibrating = false;
+      viewerStage.classList.remove('calibrating-mode');
+      hideCalibrationPrompt();
+
+      // Show calibration details form
+      openCalibrationForm(dist);
+    }
+  }
+
+  /** Shows the calibration data input form after 2 points are placed. */
+  function openCalibrationForm(pixelDist) {
+    calKnownLengthInput.value = '';
+    errorCalKnownLength.textContent = '';
+    calKnownLengthInput.classList.remove('input-error');
+
+    // Default unit: microscopic -> um, regular -> mm
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    if (orig && orig.mode === 'microscopic') {
+      calUnitSelect.value = 'um';
+      calReferenceLabelInput.placeholder = 'e.g., Stage micrometer division (10 um)';
+    } else {
+      calUnitSelect.value = 'mm';
+      calReferenceLabelInput.placeholder = 'e.g., Millimeter ruler division (1 mm)';
+    }
+
+    calMeasuredDistance.textContent = 'Measured pixel distance: ' + pixelDist.toFixed(2) + ' px';
+
+    // Rule 3: Warn, but allow, if the reference line is under 50 px long (low precision)
+    if (pixelDist < 50) {
+      calibrationWarning.textContent = 'Warning: Reference line is under 50 pixels long (' + pixelDist.toFixed(1) + ' px). Calibration precision may be low.';
+      calibrationWarning.hidden = false;
+    } else {
+      calibrationWarning.hidden = true;
+    }
+
+    calibrationForm.hidden = false;
+    calKnownLengthInput.focus();
+  }
+
+  /** Opens the copy calibration panel allowing student to copy scale from another original. */
+  function openCopyCalibrationPanel() {
+    copyCalibrationSource.innerHTML = '';
+    const originals = activeSample.images.originals;
+    const available = [];
+
+    originals.forEach((orig, idx) => {
+      if (idx !== currentViewerOrigIndex && orig.calibration) {
+        available.push({ orig, idx });
+      }
+    });
+
+    if (available.length === 0) {
+      showStatus('No other calibrated images found in this sample.', 'error');
+      return;
+    }
+
+    available.forEach(({ orig, idx }) => {
+      const option = document.createElement('option');
+      option.value = String(idx);
+      const modeText = orig.mode === 'microscopic' ? 'Micro' : 'Regular';
+      const umStr = formatUmPerPixel(orig.calibration.pixelsPerMicrometer);
+      option.textContent = 'Original #' + (idx + 1) + ' (' + modeText + ', ' + (orig.fileName || 'image') + ') - 1 px = ' + umStr + ' um [' + (orig.calibration.referenceLabel || 'Scale') + ']';
+      copyCalibrationSource.appendChild(option);
+    });
+
+    copyCalibrationPanel.hidden = false;
+  }
+
   /** Opens the viewer for the original image at the given index of the active sample. */
   function openImageViewer(index) {
     const originals = activeSample && activeSample.images ? activeSample.images.originals : null;
@@ -1071,10 +1394,28 @@
       return;
     }
 
+    currentViewerOrigIndex = index;
     releaseViewerImage();
     viewerPointers.clear();
     viewerState.natW = 0;
     viewerState.natH = 0;
+
+    // Reset calibration interactive states
+    calibrationState.isCalibrating = false;
+    viewerStage.classList.remove('calibrating-mode');
+    hideCalibrationPrompt();
+    hideCalibrationForm();
+    hideCopyPanel();
+
+    // If this original already has two-point calibration points, load them for overlay
+    if (orig.calibration && Array.isArray(orig.calibration.points) && orig.calibration.points.length === 2) {
+      calibrationState.points = [
+        { x: orig.calibration.points[0].x, y: orig.calibration.points[0].y },
+        { x: orig.calibration.points[1].x, y: orig.calibration.points[1].y }
+      ];
+    } else {
+      calibrationState.points = [];
+    }
 
     const modeLabel = orig.mode === 'microscopic' ? 'Microscopic' : 'Regular';
     const baseInfo =
@@ -1096,6 +1437,8 @@
       viewerInfo.innerHTML = baseInfo +
         '<span>&bull;</span><span>' + viewerState.natW + 'x' + viewerState.natH + ' px</span>';
       viewerFit();
+      updateViewerCalibrationUI();
+      renderViewerOverlay();
     };
     viewerImage.onerror = function () {
       showStatus('This image could not be displayed.', 'error');
@@ -1117,10 +1460,19 @@
 
   /** Closes the viewer and returns to the capture view (image list). */
   function closeImageViewer() {
+    currentViewerOrigIndex = -1;
+    calibrationState.isCalibrating = false;
+    calibrationState.points = [];
+    viewerStage.classList.remove('calibrating-mode');
+    hideCalibrationPrompt();
+    hideCalibrationForm();
+    hideCopyPanel();
+    if (viewerOverlay) viewerOverlay.innerHTML = '';
     releaseViewerImage();
     viewerPointers.clear();
     viewerStage.classList.remove('grabbing');
     switchView('capture');
+    renderSavedOriginals();
   }
 
   // Tap/click a saved original thumbnail -> open viewer
@@ -1141,6 +1493,179 @@
   btnViewerReset.addEventListener('click', viewerFit);
   btnViewerBack.addEventListener('click', closeImageViewer);
 
+  // Calibration toolbar button
+  btnViewerCalibrate.addEventListener('click', () => {
+    startCalibrationMode();
+  });
+  btnRecalibrate.addEventListener('click', () => {
+    startCalibrationMode();
+  });
+  btnCancelCalibration.addEventListener('click', cancelCalibrationMode);
+  btnCancelCalForm.addEventListener('click', cancelCalibrationMode);
+
+  btnResetPoints.addEventListener('click', () => {
+    calibrationState.points = [];
+    renderViewerOverlay();
+    calibrationPromptStep.textContent = 'Points reset. Tap first reference point on image (0/2 points placed).';
+    btnResetPoints.hidden = true;
+  });
+
+  btnRetapPoints.addEventListener('click', () => {
+    startCalibrationMode();
+  });
+
+  calKnownLengthInput.addEventListener('input', () => {
+    calKnownLengthInput.classList.remove('input-error');
+    errorCalKnownLength.textContent = '';
+  });
+
+  // Calibration Form submission (Step 4 & 5)
+  calibrationForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (currentViewerOrigIndex < 0 || !activeSample) return;
+
+    const lengthVal = parseFloat(calKnownLengthInput.value);
+    if (isNaN(lengthVal) || lengthVal <= 0) {
+      errorCalKnownLength.textContent = 'Please enter a valid reference length greater than 0.';
+      calKnownLengthInput.classList.add('input-error');
+      return;
+    }
+
+    const unitVal = calUnitSelect.value;
+    if (!['um', 'mm', 'cm', 'in'].includes(unitVal)) {
+      return;
+    }
+
+    if (calibrationState.points.length < 2) {
+      showStatus('Calibration points missing. Please retap points.', 'error');
+      return;
+    }
+
+    const p1 = calibrationState.points[0];
+    const p2 = calibrationState.points[1];
+    const pixelDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+    if (pixelDist < 3) {
+      showStatus('Points are less than 3 px apart. Calibration rejected.', 'error');
+      return;
+    }
+
+    // Convert known physical length to micrometers
+    // 1 mm = 1000 um, 1 cm = 10000 um, 1 in = 25400 um
+    let knownLengthInUm = 0;
+    if (unitVal === 'um') {
+      knownLengthInUm = lengthVal;
+    } else if (unitVal === 'mm') {
+      knownLengthInUm = lengthVal * 1000;
+    } else if (unitVal === 'cm') {
+      knownLengthInUm = lengthVal * 10000;
+    } else if (unitVal === 'in') {
+      knownLengthInUm = lengthVal * 25400;
+    }
+
+    const pixelsPerMicrometer = pixelDist / knownLengthInUm;
+    const refLabel = calReferenceLabelInput.value.trim() || 'Two-point calibration';
+
+    // Step 5: Save calibration on that original image's record (never modify original image Blob)
+    const calibrationRecord = {
+      referenceLabel: refLabel,
+      knownLength: lengthVal,
+      unit: unitVal,
+      pixelDistance: parseFloat(pixelDist.toFixed(2)),
+      pixelsPerMicrometer: pixelsPerMicrometer,
+      calibratedAt: new Date().toISOString(),
+      source: 'two-point',
+      points: [
+        { x: parseFloat(p1.x.toFixed(1)), y: parseFloat(p1.y.toFixed(1)) },
+        { x: parseFloat(p2.x.toFixed(1)), y: parseFloat(p2.y.toFixed(1)) }
+      ]
+    };
+
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    orig.calibration = calibrationRecord;
+    activeSample.updatedAt = new Date().toISOString();
+
+    saveSampleToDB(activeSample)
+      .then(() => {
+        showStatus('Calibration saved successfully: 1 px = ' + formatUmPerPixel(pixelsPerMicrometer) + ' um.', 'success');
+        hideCalibrationForm();
+        updateViewerCalibrationUI();
+        renderViewerOverlay();
+      })
+      .catch((err) => {
+        showStatus('Failed to persist calibration: ' + err.message, 'error');
+      });
+  });
+
+  // Clear Calibration
+  btnClearCalibration.addEventListener('click', () => {
+    if (currentViewerOrigIndex < 0 || !activeSample) return;
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    if (!orig || !orig.calibration) return;
+
+    if (!window.confirm('Clear calibration for this image?')) {
+      return;
+    }
+
+    orig.calibration = null;
+    calibrationState.points = [];
+    activeSample.updatedAt = new Date().toISOString();
+
+    saveSampleToDB(activeSample)
+      .then(() => {
+        showStatus('Calibration cleared for this image.', 'info');
+        renderViewerOverlay();
+        updateViewerCalibrationUI();
+      })
+      .catch((err) => {
+        showStatus('Failed to update calibration in IndexedDB: ' + err.message, 'error');
+      });
+  });
+
+  // Copy Calibration
+  btnCopyCalibration.addEventListener('click', openCopyCalibrationPanel);
+  btnCancelCopy.addEventListener('click', hideCopyPanel);
+
+  btnConfirmCopy.addEventListener('click', () => {
+    if (currentViewerOrigIndex < 0 || !activeSample) return;
+    const sourceIdx = parseInt(copyCalibrationSource.value, 10);
+    const sourceOrig = activeSample.images.originals[sourceIdx];
+    if (!sourceOrig || !sourceOrig.calibration) {
+      showStatus('Selected source image has no valid calibration.', 'error');
+      return;
+    }
+
+    const currentOrig = activeSample.images.originals[currentViewerOrigIndex];
+    const sourceCal = sourceOrig.calibration;
+
+    // Requirement 5 & 7: record copiedFrom on the copy
+    const copiedCalibration = {
+      referenceLabel: sourceCal.referenceLabel,
+      knownLength: sourceCal.knownLength,
+      unit: sourceCal.unit,
+      pixelDistance: sourceCal.pixelDistance,
+      pixelsPerMicrometer: sourceCal.pixelsPerMicrometer,
+      calibratedAt: new Date().toISOString(),
+      source: 'copied',
+      copiedFrom: sourceOrig.fileName || ('Original #' + (sourceIdx + 1))
+    };
+
+    currentOrig.calibration = copiedCalibration;
+    calibrationState.points = []; // no points marked on this original
+    activeSample.updatedAt = new Date().toISOString();
+
+    saveSampleToDB(activeSample)
+      .then(() => {
+        showStatus('Calibration copied from Original #' + (sourceIdx + 1) + '.', 'success');
+        hideCopyPanel();
+        updateViewerCalibrationUI();
+        renderViewerOverlay();
+      })
+      .catch((err) => {
+        showStatus('Failed to persist copied calibration: ' + err.message, 'error');
+      });
+  });
+
   // Mouse wheel zoom (around the cursor)
   viewerStage.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -1149,10 +1674,21 @@
     viewerZoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
   }, { passive: false });
 
-  // Drag to pan (one pointer) and pinch to zoom (two pointers)
+  // Drag to pan (single pointer) and pinch to zoom (two pointers)
+  // In calibrate mode: movement under 6 px is treated as a tap (Rule 1)
   viewerStage.addEventListener('pointerdown', (e) => {
     viewerStage.setPointerCapture(e.pointerId);
-    viewerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    viewerPointers.set(e.pointerId, {
+      startX: e.clientX,
+      startY: e.clientY,
+      x: e.clientX,
+      y: e.clientY,
+      maxMove: 0,
+      isDrag: false
+    });
+    if (viewerPointers.size > 1) {
+      pinchOccurredInViewer = true;
+    }
     viewerStage.classList.add('grabbing');
   });
 
@@ -1160,14 +1696,37 @@
     if (!viewerPointers.has(e.pointerId)) return;
 
     if (viewerPointers.size === 1) {
-      const prev = viewerPointers.get(e.pointerId);
-      viewerState.tx += e.clientX - prev.x;
-      viewerState.ty += e.clientY - prev.y;
-      viewerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      viewerApply();
+      const p = viewerPointers.get(e.pointerId);
+      const moveFromStart = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
+      if (moveFromStart > p.maxMove) {
+        p.maxMove = moveFromStart;
+      }
+
+      // If calibrating, require >= 6px movement before dragging to pan (treat under 6px as tap)
+      if (calibrationState.isCalibrating && !p.isDrag) {
+        if (moveFromStart >= 6) {
+          p.isDrag = true;
+        }
+      } else if (!calibrationState.isCalibrating) {
+        p.isDrag = true;
+      }
+
+      if (p.isDrag) {
+        viewerState.tx += e.clientX - p.x;
+        viewerState.ty += e.clientY - p.y;
+        viewerApply();
+      }
+
+      p.x = e.clientX;
+      p.y = e.clientY;
     } else if (viewerPointers.size === 2) {
+      pinchOccurredInViewer = true;
       const before = viewerPinchInfo();
-      viewerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const p = viewerPointers.get(e.pointerId);
+      p.x = e.clientX;
+      p.y = e.clientY;
+      const moveFromStart = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
+      if (moveFromStart > p.maxMove) p.maxMove = moveFromStart;
       const after = viewerPinchInfo();
       if (before.dist > 0) {
         const rect = viewerStage.getBoundingClientRect();
@@ -1180,8 +1739,24 @@
 
   ['pointerup', 'pointercancel'].forEach((eventName) => {
     viewerStage.addEventListener(eventName, (e) => {
+      const p = viewerPointers.get(e.pointerId);
+      const wasTap = eventName === 'pointerup' &&
+                     calibrationState.isCalibrating &&
+                     p &&
+                     !p.isDrag &&
+                     p.maxMove < 6 &&
+                     !pinchOccurredInViewer &&
+                     viewerPointers.size === 1;
+
       viewerPointers.delete(e.pointerId);
-      if (viewerPointers.size === 0) viewerStage.classList.remove('grabbing');
+      if (viewerPointers.size === 0) {
+        viewerStage.classList.remove('grabbing');
+        pinchOccurredInViewer = false;
+      }
+
+      if (wasTap) {
+        handleViewerTap(p.startX, p.startY);
+      }
     });
   });
 
