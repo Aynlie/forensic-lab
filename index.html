@@ -157,6 +157,200 @@
         </div>
       </div>
     </section>
+
+    <!-- 5. Mode Selection View (Step 2) -->
+    <section id="view-mode-selection" class="view" hidden>
+      <div class="card">
+        <div class="view-header">
+          <h2>Examination Mode Selection</h2>
+          <button type="button" id="btn-mode-dashboard" class="btn btn-outline">&larr; Dashboard</button>
+        </div>
+
+        <div class="active-sample-bar" id="mode-sample-info">
+          <!-- Populated by JS: Sample ID & Case Number -->
+        </div>
+
+        <p class="section-lead">Select the examination protocol appropriate for your imaging setup:</p>
+
+        <div class="mode-options-grid">
+          <div class="mode-card" id="card-mode-regular">
+            <div class="mode-card-header">
+              <div>
+                <h3>Regular Camera Examination</h3>
+                <span class="mode-tag tag-regular">Macroscopic Analysis</span>
+              </div>
+            </div>
+            <p class="mode-card-desc">
+              Gross morphological analysis using a mobile phone or digital camera. Suitable for assessing gross hair length, curvature/wave pattern, macroscopic color, and shaft integrity.
+            </p>
+            <ul class="mode-card-points">
+              <li>Requires high-contrast clean background</li>
+              <li>Supports real-world calibration using a standard millimeter ruler</li>
+              <li>Results will be strictly designated under Regular Camera Examination</li>
+            </ul>
+            <button type="button" id="btn-select-regular" class="btn btn-primary btn-block">Select Regular Camera Mode</button>
+          </div>
+
+          <div class="mode-card" id="card-mode-microscopic">
+            <div class="mode-card-header">
+              <div>
+                <h3>Microscopic Examination</h3>
+                <span class="mode-tag tag-micro">High Magnification</span>
+              </div>
+            </div>
+            <p class="mode-card-desc">
+              Microscopic structural examination via an eyepiece camera adapter or photomicrograph upload. Suitable for examining cuticle scale pattern, medulla index/continuity, cortex pigmentation, root, and tip morphology.
+            </p>
+            <ul class="mode-card-points">
+              <li>Requires mounted specimen on clean glass slide with coverslip</li>
+              <li>Supports micrometer calibration (µm) with stage micrometer scale</li>
+              <li>Results will be strictly designated under Microscopic Examination</li>
+            </ul>
+            <button type="button" id="btn-select-microscopic" class="btn btn-primary btn-block">Select Microscopic Mode</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Image Capture & Upload View (Step 2) -->
+    <section id="view-capture" class="view" hidden>
+      <div class="card">
+        <div class="view-header">
+          <h2>Image Capture &amp; Upload</h2>
+          <button type="button" id="btn-capture-back" class="btn btn-outline">&larr; Change Mode</button>
+        </div>
+
+        <!-- Prominent Active Mode Indicator (Rule 9) -->
+        <div class="active-mode-banner" id="active-mode-banner">
+          <div class="mode-indicator-row">
+            <span class="mode-indicator-label">Active Examination Mode:</span>
+            <span class="mode-indicator-value" id="active-mode-text">Regular Camera Examination</span>
+          </div>
+          <div class="sample-indicator-pill" id="capture-sample-pill"></div>
+        </div>
+
+        <!-- Mode-Specific Positioning Instructions -->
+        <div class="instructions-card" id="positioning-instructions">
+          <div class="instructions-header">
+            <strong>Positioning &amp; Preparation Instructions</strong>
+          </div>
+          <div id="instructions-content" class="instructions-body">
+            <!-- Dynamically populated based on mode -->
+          </div>
+        </div>
+
+        <!-- Capture Source Controls -->
+        <div class="capture-controls-card">
+          <h3 class="subsection-title">Acquire Sample Image</h3>
+          <p class="section-lead">Choose a method to acquire hair imagery. Original images are permanently preserved untouched per Rule 10.</p>
+
+          <div class="capture-action-row">
+            <button type="button" id="btn-open-camera" class="btn btn-primary">
+              Use Device Camera
+            </button>
+            <button type="button" id="btn-trigger-upload" class="btn btn-secondary">
+              Upload Image File
+            </button>
+            <input type="file" id="input-file-upload" accept="image/*" hidden>
+          </div>
+
+          <!-- Drag and drop zone -->
+          <div id="file-drop-zone" class="file-drop-zone" tabindex="0" role="button" aria-label="Drop image files here or click to browse">
+            <p class="drop-zone-text"><strong>Drag &amp; drop</strong> image file here, or <span class="drop-zone-browse">browse device files</span></p>
+            <p class="drop-zone-hint">Supports JPEG, PNG, WebP (Max recommended size: 15MB)</p>
+          </div>
+        </div>
+
+        <!-- Camera Viewfinder & Stream Container -->
+        <div id="camera-section" class="camera-section" hidden>
+          <div id="camera-error" class="status-banner error" hidden role="alert"></div>
+
+          <div class="viewfinder-container">
+            <video id="camera-video" playsinline autoplay muted></video>
+            <div class="viewfinder-overlay">
+              <div class="viewfinder-guide-line"></div>
+              <span class="viewfinder-hint">Align hair shaft along guideline</span>
+            </div>
+          </div>
+
+          <div class="camera-actions-toolbar">
+            <button type="button" id="btn-switch-camera" class="btn btn-secondary btn-sm" title="Switch between front and back cameras">Flip Camera</button>
+            <button type="button" id="btn-snap-photo" class="btn btn-primary">Take Photo</button>
+            <button type="button" id="btn-stop-camera" class="btn btn-outline btn-sm">Close Camera</button>
+          </div>
+        </div>
+
+        <!-- Hidden canvas for snapshot taking & image quality evaluation -->
+        <canvas id="analysis-canvas" hidden></canvas>
+
+        <!-- Preview and Quality Assessment Section -->
+        <div id="preview-section" class="preview-section" hidden>
+          <div class="preview-header">
+            <h3>Image Preview &amp; Quality Check</h3>
+            <span class="preview-badge">Pending Save</span>
+          </div>
+
+          <div class="preview-display">
+            <img id="image-preview" alt="Captured forensic hair sample preview">
+          </div>
+
+          <!-- Basic Image Quality Check Card -->
+          <div class="quality-card" id="quality-card">
+            <div class="quality-card-header">
+              <strong>Image Quality Assessment (Basic Automated Check)</strong>
+            </div>
+
+            <div class="quality-metrics-grid">
+              <div class="metric-box">
+                <span class="metric-label">Resolution</span>
+                <span class="metric-value" id="quality-res-val">--</span>
+                <span class="metric-badge" id="quality-res-badge">Evaluating...</span>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">Exposure / Brightness</span>
+                <span class="metric-value" id="quality-bright-val">--</span>
+                <span class="metric-badge" id="quality-bright-badge">Evaluating...</span>
+              </div>
+              <div class="metric-box">
+                <span class="metric-label">Contrast</span>
+                <span class="metric-value" id="quality-contrast-val">--</span>
+                <span class="metric-badge" id="quality-contrast-badge">Evaluating...</span>
+              </div>
+            </div>
+
+            <div class="quality-advisory" id="quality-advisory-msg">
+              Evaluating image properties...
+            </div>
+          </div>
+
+          <!-- Preview Action Buttons -->
+          <div class="preview-actions">
+            <button type="button" id="btn-retake-image" class="btn btn-secondary">
+              &larr; Retake / Discard
+            </button>
+            <button type="button" id="btn-save-original" class="btn btn-primary">
+              Save as Original Image
+            </button>
+          </div>
+        </div>
+
+        <!-- Preserved Original Images List (Rule 10) -->
+        <div class="saved-originals-card" id="saved-originals-card">
+          <div class="saved-originals-header">
+            <h3>Original Images for This Sample</h3>
+            <span class="rule-badge">Rule 10: Originals Preserved Untouched</span>
+          </div>
+          <p class="section-lead">All original captures are permanently stored separately as raw evidence records.</p>
+          <div id="originals-grid" class="originals-grid">
+            <!-- Dynamically populated list of original images for this sample -->
+          </div>
+          <div class="post-save-nav">
+            <button type="button" id="btn-finish-to-dashboard" class="btn btn-outline">&larr; Return to Dashboard</button>
+            <button type="button" id="btn-finish-to-samples" class="btn btn-secondary">View in Saved Samples &rarr;</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script src="app.js"></script>

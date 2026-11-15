@@ -47,7 +47,7 @@ Deadline: Wednesday, November 18, 2026. Work MVP-first.
 
 ## 5. Design direction
 
-Clean, professional, forensic-inspired. Neutral palette (dark navy/slate with a single accent color), clear typography, large tap targets, consistent spacing, simple icons. No heavy animations, no excessive gradients, no clutter.
+Clean, professional, forensic-inspired. Neutral palette (dark navy/slate with a single accent color), clear typography, large tap targets, consistent spacing, simple icons. No heavy animations, no excessive gradients, no clutter. Do not use emojis anywhere in the UI, code, or generated text. Use plain text labels or simple inline SVG icons only. The active mode banner is solid blue (#1E3A8A) with white text. Other UI colors follow the standard design direction.
 
 ## 6. Data model (keep consistent across steps)
 
@@ -67,10 +67,10 @@ Each sample record:
 
 Statuses: NOT STARTED / IN PROGRESS / NEEDS TESTING / COMPLETED / BLOCKED. Update the status below after each step.
 
-**Step 1 — Dashboard and sample registration** — NEEDS TESTING
+**Step 1 — Dashboard and sample registration** — COMPLETED
 Dashboard with "New Examination" and "Saved Samples". Subject and Sample form with fields: Subject/Owner Name*, Case Number*, Sample ID (auto-generate if blank), Age, Sex, Collection Date*, Collection Time*, Collection Location*, Collected By*, Sample Description, Additional Notes (* = required). Validation with clear messages. Confirmation screen with Edit and Confirm. Save to IndexedDB. Saved Samples list. Form note that the name is user-provided and the app does not identify the owner.
 
-**Step 2 — Mode selection and image capture/upload** — NOT STARTED
+**Step 2 — Mode selection and image capture/upload** — NEEDS TESTING
 Mode selection (Regular / Microscopic) shown after confirmation. Camera capture via the browser, gallery upload, preview, retake, and basic image quality check. Camera permission error handling. Positioning instructions. Original image saved separately.
 
 **Step 3 — Image viewer, zoom, crop** — NOT STARTED
