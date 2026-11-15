@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Educational Forensic Hair Examination Web App for criminology students.">
+  <title>Forensic Hair Examination</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="badge">Forensic Laboratory Documentation</div>
+      <h1>Forensic Hair Examination</h1>
+      <p class="subtitle">Educational Evidence &amp; Sample Custody Log</p>
+    </header>
+
+    <!-- Global Alert / Status Banner -->
+    <div id="status-banner" class="status-banner" hidden role="status" aria-live="polite"></div>
+
+    <!-- 1. Dashboard View -->
+    <section id="view-dashboard" class="view active">
+      <div class="card dashboard-card">
+        <h2>Dashboard</h2>
+        <p class="dashboard-text">
+          Select an action to begin a new examination record or review previously saved laboratory samples.
+        </p>
+        <div class="dashboard-buttons">
+          <button type="button" id="btn-new-exam" class="btn btn-primary">New Examination</button>
+          <button type="button" id="btn-saved-samples" class="btn btn-secondary">Saved Samples</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Subject & Sample Form View -->
+    <section id="view-form" class="view" hidden>
+      <div class="card">
+        <div class="view-header">
+          <h2>Subject &amp; Sample Form</h2>
+          <button type="button" id="btn-form-back" class="btn btn-outline">&larr; Back to Dashboard</button>
+        </div>
+
+        <div class="disclaimer-box" role="note">
+          <strong>Mandatory Laboratory Note:</strong> Subject/Owner name is user-provided strictly for chain of custody and evidence management documentation. This educational software does not perform individual source attribution and does not identify the owner or biological origin of a hair sample.
+        </div>
+
+        <form id="examination-form" novalidate>
+          <div class="form-group">
+            <label for="subjectName">Subject / Owner Name <span class="required" aria-hidden="true">*</span></label>
+            <input type="text" id="subjectName" name="subjectName" class="form-control" autocomplete="off" placeholder="e.g., Doe, Jane / Reference Evidence Item">
+            <span class="error-msg" id="error-subjectName"></span>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="caseNumber">Case Number <span class="required" aria-hidden="true">*</span></label>
+              <input type="text" id="caseNumber" name="caseNumber" class="form-control" autocomplete="off" placeholder="e.g., CR-2026-0042">
+              <span class="error-msg" id="error-caseNumber"></span>
+            </div>
+            <div class="form-group">
+              <label for="sampleId">Sample ID <span class="hint">(Auto-generate if blank)</span></label>
+              <input type="text" id="sampleId" name="sampleId" class="form-control" autocomplete="off" placeholder="Leave empty to auto-generate">
+              <span class="error-msg" id="error-sampleId"></span>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="age">Age <span class="hint">(Optional)</span></label>
+              <input type="number" id="age" name="age" class="form-control" min="0" max="130" placeholder="e.g., 25">
+            </div>
+            <div class="form-group">
+              <label for="sex">Sex <span class="hint">(Optional)</span></label>
+              <select id="sex" name="sex" class="form-control">
+                <option value="">-- Select (Optional) --</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Indeterminate">Indeterminate / Unknown</option>
+                <option value="Not Specified">Not Specified</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="collectionDate">Collection Date <span class="required" aria-hidden="true">*</span></label>
+              <input type="date" id="collectionDate" name="collectionDate" class="form-control">
+              <span class="error-msg" id="error-collectionDate"></span>
+            </div>
+            <div class="form-group">
+              <label for="collectionTime">Collection Time <span class="required" aria-hidden="true">*</span></label>
+              <input type="time" id="collectionTime" name="collectionTime" class="form-control">
+              <span class="error-msg" id="error-collectionTime"></span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="collectionLocation">Collection Location <span class="required" aria-hidden="true">*</span></label>
+            <input type="text" id="collectionLocation" name="collectionLocation" class="form-control" autocomplete="off" placeholder="e.g., Living Room Rug, South Quadrant">
+            <span class="error-msg" id="error-collectionLocation"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="collectedBy">Collected By <span class="required" aria-hidden="true">*</span></label>
+            <input type="text" id="collectedBy" name="collectedBy" class="form-control" autocomplete="off" placeholder="e.g., Det. M. Taylor, Badge #509">
+            <span class="error-msg" id="error-collectedBy"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="sampleDescription">Sample Description <span class="hint">(Optional)</span></label>
+            <textarea id="sampleDescription" name="sampleDescription" class="form-control" rows="3" placeholder="Macroscopic appearance (e.g., single dark strand, approx. 5 cm, curved)"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="additionalNotes">Additional Notes <span class="hint">(Optional)</span></label>
+            <textarea id="additionalNotes" name="additionalNotes" class="form-control" rows="2" placeholder="Packaging, storage conditions, or chain of custody notes"></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" id="btn-submit-form" class="btn btn-primary btn-block">Review Examination Details</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- 3. Confirmation Screen View -->
+    <section id="view-confirmation" class="view" hidden>
+      <div class="card">
+        <h2>Confirm Examination Details</h2>
+        <p class="section-lead">Please verify all entered laboratory information before saving to local database.</p>
+
+        <div class="summary-card" id="confirmation-details">
+          <!-- Populated by JavaScript -->
+        </div>
+
+        <div class="disclaimer-box" role="note">
+          <strong>Chain of Custody Notice:</strong> Record verification preserves entered metadata for forensic educational log integrity.
+        </div>
+
+        <div class="confirmation-actions">
+          <button type="button" id="btn-edit-confirmation" class="btn btn-secondary">Edit</button>
+          <button type="button" id="btn-confirm-save" class="btn btn-primary">Confirm</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Saved Samples View -->
+    <section id="view-saved-samples" class="view" hidden>
+      <div class="card">
+        <div class="view-header">
+          <h2>Saved Samples</h2>
+          <button type="button" id="btn-saved-back" class="btn btn-outline">&larr; Back to Dashboard</button>
+        </div>
+
+        <div id="saved-samples-container" class="samples-list">
+          <!-- Populated from IndexedDB -->
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
