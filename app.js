@@ -2,6 +2,7 @@
  * Educational Forensic Hair Examination Web App (PWA)
  * Step 1: Subject & Sample Management with IndexedDB
  * Step 2: Mode Selection, Camera/Upload Image Capture & Basic Quality Check
+ * Step 3: Image Viewer (zoom and pan only, display-only; crop postponed)
  * Pure Vanilla JavaScript - No external libraries
  */
 
@@ -10,7 +11,7 @@
 
   // --- IndexedDB Configuration ---
   const DB_NAME = 'ForensicHairExamDB';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2; // Bumped to 2: drop base64 records, store Blobs instead
   const STORE_NAME = 'samples';
 
   let dbInstance = null;
@@ -18,15 +19,27 @@
   let activeSample = null; // Currently active sample record undergoing examination
   let currentCameraStream = null; // Active MediaStream from camera
   let cameraFacingMode = 'environment'; // Preferred camera: 'environment' (back) or 'user' (front)
-  let pendingImageData = null; // Holds captured/uploaded image data awaiting save as original
+  let pendingImageData = null; // Holds captured/uploaded image Blob awaiting save as original
+  let pendingPreviewUrl = null; // Object URL for the current preview; revoked on clear
 
   /**
    * Initializes or opens the IndexedDB database.
+   * Re-opens if the cached connection was closed by a version-change event.
    * @returns {Promise<IDBDatabase>}
    */
   function openDB() {
+    // Re-use the cached connection only if it is still open.
+    // A closed connection has no object store names accessible; checking the
+    // name property is a lightweight way to detect an invalidated handle.
     if (dbInstance) {
-      return Promise.resolve(dbInstance);
+      try {
+        // Accessing objectStoreNames throws on a closed connection in some browsers;
+        // in others the name list is simply empty. Either way, re-open if closed.
+        void dbInstance.objectStoreNames;
+        return Promise.resolve(dbInstance);
+      } catch (_) {
+        dbInstance = null;
+      }
     }
 
     return new Promise((resolve, reject) => {
@@ -34,24 +47,41 @@
 
       request.onupgradeneeded = function (event) {
         const db = event.target.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          const store = db.createObjectStore(STORE_NAME, {
-            keyPath: 'id',
-            autoIncrement: true
-          });
-          store.createIndex('sampleId', 'sampleId', { unique: false });
-          store.createIndex('caseNumber', 'caseNumber', { unique: false });
-          store.createIndex('createdAt', 'createdAt', { unique: false });
+        // Drop existing store on upgrade so old base64 records are cleared cleanly
+        if (db.objectStoreNames.contains(STORE_NAME)) {
+          db.deleteObjectStore(STORE_NAME);
         }
+        const store = db.createObjectStore(STORE_NAME, {
+          keyPath: 'id',
+          autoIncrement: true
+        });
+        store.createIndex('sampleId', 'sampleId', { unique: false });
+        store.createIndex('caseNumber', 'caseNumber', { unique: false });
+        store.createIndex('createdAt', 'createdAt', { unique: false });
       };
 
       request.onsuccess = function (event) {
         dbInstance = event.target.result;
+
+        // Another tab upgraded the DB while this one held the connection.
+        // Close immediately and reload so this tab gets the new schema.
+        dbInstance.onversionchange = function () {
+          dbInstance.close();
+          dbInstance = null;
+          window.location.reload();
+        };
+
         resolve(dbInstance);
       };
 
       request.onerror = function (event) {
         reject(new Error('IndexedDB error: ' + (event.target.error ? event.target.error.message : event.target.error)));
+      };
+
+      // Fired when this open request is blocked by another tab that holds the
+      // old-version connection and has not yet closed it.
+      request.onblocked = function () {
+        showStatus('Close other tabs of this app and reload.', 'error');
       };
     });
   }
@@ -134,7 +164,8 @@
     confirmation: document.getElementById('view-confirmation'),
     savedSamples: document.getElementById('view-saved-samples'),
     modeSelection: document.getElementById('view-mode-selection'),
-    capture: document.getElementById('view-capture')
+    capture: document.getElementById('view-capture'),
+    viewer: document.getElementById('view-viewer')
   };
 
   const statusBanner = document.getElementById('status-banner');
@@ -621,20 +652,30 @@
     const ctx = analysisCanvas.getContext('2d');
     ctx.drawImage(cameraVideo, 0, 0, w, h);
 
-    const dataUrl = analysisCanvas.toDataURL('image/jpeg', 0.92);
     const fileName = `cam_capture_${Date.now()}.jpg`;
 
-    stopCamera();
-    processAndPreviewImage(dataUrl, fileName);
+    // toBlob is async; stop camera and pass Blob directly (no base64 conversion)
+    analysisCanvas.toBlob(function (blob) {
+      if (!blob) {
+        showStatus('Failed to capture image from camera.', 'error');
+        return;
+      }
+      stopCamera();
+      processAndPreviewImage(blob, fileName);
+    }, 'image/jpeg', 0.92);
   }
 
   /**
    * Analyzes image quality using real canvas pixel math and displays preview.
    * Rule 3: Never produce fake, random, or hardcoded analysis results.
-   * @param {string} dataUrl
+   * @param {Blob} blob  - Image Blob from file input, drag-drop, or canvas.toBlob
    * @param {string} fileName
    */
-  function processAndPreviewImage(dataUrl, fileName) {
+  function processAndPreviewImage(blob, fileName) {
+    // Create an object URL for preview and quality analysis; revoke only on clearPreview
+    const previewUrl = URL.createObjectURL(blob);
+    pendingPreviewUrl = previewUrl;
+
     const img = new Image();
     img.onload = function () {
       const naturalWidth = img.naturalWidth;
@@ -729,7 +770,7 @@
       }
 
       // Update UI preview & quality assessment card
-      imagePreview.src = dataUrl;
+      imagePreview.src = previewUrl;
       qualityResVal.textContent = `${naturalWidth} × ${naturalHeight} px`;
       qualityResBadge.textContent = resBadgeText;
       qualityResBadge.className = 'metric-badge ' + resBadgeClass;
@@ -744,9 +785,9 @@
 
       qualityAdvisoryMsg.textContent = advisories.join(' ');
 
-      // Store pending image data in memory
+      // Store pending image Blob in memory (not base64)
       pendingImageData = {
-        dataUrl: dataUrl,
+        blob: blob,
         fileName: fileName,
         quality: {
           width: naturalWidth,
@@ -766,7 +807,7 @@
       showStatus('Failed to load image for quality assessment.', 'error');
     };
 
-    img.src = dataUrl;
+    img.src = previewUrl;
   }
 
   /**
@@ -776,6 +817,11 @@
     previewSection.setAttribute('hidden', '');
     imagePreview.src = '';
     inputFileUpload.value = '';
+    // Revoke the preview object URL to free memory
+    if (pendingPreviewUrl) {
+      URL.revokeObjectURL(pendingPreviewUrl);
+      pendingPreviewUrl = null;
+    }
     pendingImageData = null;
   }
 
@@ -805,7 +851,7 @@
       id: 'orig_' + Date.now() + '_' + Math.floor(1000 + Math.random() * 9000),
       fileName: pendingImageData.fileName,
       mode: activeSample.mode,
-      dataUrl: pendingImageData.dataUrl,
+      blob: pendingImageData.blob, // Stored as Blob, not base64 string
       capturedAt: new Date().toISOString(),
       quality: pendingImageData.quality
     };
@@ -841,7 +887,7 @@
       html += `
         <div class="original-item">
           <span class="original-stamp">ORIGINAL #${index + 1}</span>
-          <img src="${orig.dataUrl}" alt="Original capture ${index + 1}">
+          <img class="orig-thumb" data-orig-index="${index}" alt="Original capture ${index + 1}">
           <div class="original-meta">
             <div><strong>${modeLabel}</strong> &bull; ${escapeHtml(dateStr)}</div>
             <div>${escapeHtml(orig.quality ? orig.quality.resolution : 'Raw')}</div>
@@ -851,6 +897,18 @@
     });
 
     originalsGrid.innerHTML = html;
+
+    // Set thumbnail src via object URLs after innerHTML is set (allows onload revocation)
+    originalsGrid.querySelectorAll('img.orig-thumb').forEach(function (imgEl) {
+      const idx = parseInt(imgEl.getAttribute('data-orig-index'), 10);
+      const orig = activeSample.images.originals[idx];
+      if (orig && orig.blob) {
+        const url = URL.createObjectURL(orig.blob);
+        imgEl.onload = function () { URL.revokeObjectURL(url); };
+        imgEl.onerror = function () { URL.revokeObjectURL(url); };
+        imgEl.src = url;
+      }
+    });
   }
 
   /**
@@ -921,6 +979,216 @@
         `;
       });
   }
+
+  // --- Step 3: Image Viewer (zoom and pan only) ---
+  // The viewer only DISPLAYS a stored original. It never writes to IndexedDB
+  // and never changes the stored Blob (Rule 10).
+
+  const viewerStage = document.getElementById('viewer-stage');
+  const viewerImage = document.getElementById('viewer-image');
+  const viewerInfo = document.getElementById('viewer-info');
+  const viewerZoomLabel = document.getElementById('viewer-zoom-label');
+  const btnViewerBack = document.getElementById('btn-viewer-back');
+  const btnViewerZoomIn = document.getElementById('btn-viewer-zoom-in');
+  const btnViewerZoomOut = document.getElementById('btn-viewer-zoom-out');
+  const btnViewerReset = document.getElementById('btn-viewer-reset');
+
+  const VIEWER_MAX_SCALE = 8;     // up to 8 screen pixels per image pixel
+  const VIEWER_BUTTON_STEP = 1.5; // zoom factor for the Zoom In / Zoom Out buttons
+  const VIEWER_WHEEL_STEP = 1.15; // zoom factor per mouse wheel notch
+
+  // One state object so Step 4 (measurement) can map screen points to image pixels.
+  const viewerState = {
+    url: null,      // object URL of the image being shown
+    natW: 0,        // natural image width in pixels
+    natH: 0,        // natural image height in pixels
+    baseScale: 1,   // scale at which the whole image fits inside the stage
+    scale: 1,       // current scale (screen pixels per image pixel)
+    tx: 0,          // image left edge, in stage pixels
+    ty: 0           // image top edge, in stage pixels
+  };
+
+  const viewerPointers = new Map(); // active touch/mouse pointers: id -> {x, y}
+
+  /** Keeps the image inside the stage: centered if smaller, edge-limited if larger. */
+  function viewerClamp() {
+    const sw = viewerStage.clientWidth;
+    const sh = viewerStage.clientHeight;
+    const iw = viewerState.natW * viewerState.scale;
+    const ih = viewerState.natH * viewerState.scale;
+    viewerState.tx = iw <= sw ? (sw - iw) / 2 : Math.min(0, Math.max(sw - iw, viewerState.tx));
+    viewerState.ty = ih <= sh ? (sh - ih) / 2 : Math.min(0, Math.max(sh - ih, viewerState.ty));
+  }
+
+  /** Applies the current scale and position to the displayed image. */
+  function viewerApply() {
+    viewerClamp();
+    viewerImage.style.transform =
+      'translate(' + viewerState.tx + 'px, ' + viewerState.ty + 'px) scale(' + viewerState.scale + ')';
+    viewerZoomLabel.textContent = (viewerState.scale / viewerState.baseScale).toFixed(1) + 'x';
+  }
+
+  /** Fits the whole image inside the stage (also used by Reset). */
+  function viewerFit() {
+    const sw = viewerStage.clientWidth;
+    const sh = viewerStage.clientHeight;
+    if (!viewerState.natW || !viewerState.natH || !sw || !sh) return;
+    viewerState.baseScale = Math.min(sw / viewerState.natW, sh / viewerState.natH);
+    viewerState.scale = viewerState.baseScale;
+    viewerApply();
+  }
+
+  /** Zooms by a factor around a point given in stage pixels. */
+  function viewerZoomAt(factor, cx, cy) {
+    const minScale = viewerState.baseScale;
+    const maxScale = Math.max(VIEWER_MAX_SCALE, viewerState.baseScale);
+    const newScale = Math.min(maxScale, Math.max(minScale, viewerState.scale * factor));
+    const ratio = newScale / viewerState.scale;
+    viewerState.tx = cx - (cx - viewerState.tx) * ratio;
+    viewerState.ty = cy - (cy - viewerState.ty) * ratio;
+    viewerState.scale = newScale;
+    viewerApply();
+  }
+
+  /** Midpoint and distance between the two active pointers (for pinch). */
+  function viewerPinchInfo() {
+    const pts = Array.from(viewerPointers.values());
+    const a = pts[0];
+    const b = pts[1];
+    return {
+      mx: (a.x + b.x) / 2,
+      my: (a.y + b.y) / 2,
+      dist: Math.hypot(a.x - b.x, a.y - b.y)
+    };
+  }
+
+  /** Opens the viewer for the original image at the given index of the active sample. */
+  function openImageViewer(index) {
+    const originals = activeSample && activeSample.images ? activeSample.images.originals : null;
+    const orig = originals ? originals[index] : null;
+    if (!orig || !orig.blob) {
+      showStatus('Original image not found.', 'error');
+      return;
+    }
+
+    releaseViewerImage();
+    viewerPointers.clear();
+    viewerState.natW = 0;
+    viewerState.natH = 0;
+
+    const modeLabel = orig.mode === 'microscopic' ? 'Microscopic' : 'Regular';
+    const baseInfo =
+      '<span><strong>ORIGINAL #' + (index + 1) + '</strong></span>' +
+      '<span>&bull;</span><span>' + modeLabel + ' mode</span>' +
+      '<span>&bull;</span><span>' + escapeHtml(orig.fileName || 'image') + '</span>';
+    viewerInfo.innerHTML = baseInfo;
+
+    viewerState.url = URL.createObjectURL(orig.blob);
+
+    // Show the view first so the stage has a real size when the image loads.
+    switchView('viewer');
+
+    viewerImage.onload = function () {
+      viewerState.natW = viewerImage.naturalWidth;
+      viewerState.natH = viewerImage.naturalHeight;
+      viewerImage.style.width = viewerState.natW + 'px';
+      viewerImage.style.height = viewerState.natH + 'px';
+      viewerInfo.innerHTML = baseInfo +
+        '<span>&bull;</span><span>' + viewerState.natW + 'x' + viewerState.natH + ' px</span>';
+      viewerFit();
+    };
+    viewerImage.onerror = function () {
+      showStatus('This image could not be displayed.', 'error');
+      closeImageViewer();
+    };
+    viewerImage.src = viewerState.url;
+  }
+
+  /** Frees the object URL and clears the displayed image. */
+  function releaseViewerImage() {
+    viewerImage.onload = null;
+    viewerImage.onerror = null;
+    viewerImage.removeAttribute('src');
+    if (viewerState.url) {
+      URL.revokeObjectURL(viewerState.url);
+      viewerState.url = null;
+    }
+  }
+
+  /** Closes the viewer and returns to the capture view (image list). */
+  function closeImageViewer() {
+    releaseViewerImage();
+    viewerPointers.clear();
+    viewerStage.classList.remove('grabbing');
+    switchView('capture');
+  }
+
+  // Tap/click a saved original thumbnail -> open viewer
+  originalsGrid.addEventListener('click', (e) => {
+    const thumb = e.target.closest('img.orig-thumb');
+    if (!thumb) return;
+    const index = parseInt(thumb.getAttribute('data-orig-index'), 10);
+    if (!isNaN(index)) openImageViewer(index);
+  });
+
+  // Toolbar buttons (zoom around the center of the stage)
+  btnViewerZoomIn.addEventListener('click', () => {
+    viewerZoomAt(VIEWER_BUTTON_STEP, viewerStage.clientWidth / 2, viewerStage.clientHeight / 2);
+  });
+  btnViewerZoomOut.addEventListener('click', () => {
+    viewerZoomAt(1 / VIEWER_BUTTON_STEP, viewerStage.clientWidth / 2, viewerStage.clientHeight / 2);
+  });
+  btnViewerReset.addEventListener('click', viewerFit);
+  btnViewerBack.addEventListener('click', closeImageViewer);
+
+  // Mouse wheel zoom (around the cursor)
+  viewerStage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = viewerStage.getBoundingClientRect();
+    const factor = e.deltaY < 0 ? VIEWER_WHEEL_STEP : 1 / VIEWER_WHEEL_STEP;
+    viewerZoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
+  }, { passive: false });
+
+  // Drag to pan (one pointer) and pinch to zoom (two pointers)
+  viewerStage.addEventListener('pointerdown', (e) => {
+    viewerStage.setPointerCapture(e.pointerId);
+    viewerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    viewerStage.classList.add('grabbing');
+  });
+
+  viewerStage.addEventListener('pointermove', (e) => {
+    if (!viewerPointers.has(e.pointerId)) return;
+
+    if (viewerPointers.size === 1) {
+      const prev = viewerPointers.get(e.pointerId);
+      viewerState.tx += e.clientX - prev.x;
+      viewerState.ty += e.clientY - prev.y;
+      viewerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      viewerApply();
+    } else if (viewerPointers.size === 2) {
+      const before = viewerPinchInfo();
+      viewerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const after = viewerPinchInfo();
+      if (before.dist > 0) {
+        const rect = viewerStage.getBoundingClientRect();
+        viewerState.tx += after.mx - before.mx; // pan with the midpoint
+        viewerState.ty += after.my - before.my;
+        viewerZoomAt(after.dist / before.dist, after.mx - rect.left, after.my - rect.top);
+      }
+    }
+  });
+
+  ['pointerup', 'pointercancel'].forEach((eventName) => {
+    viewerStage.addEventListener(eventName, (e) => {
+      viewerPointers.delete(e.pointerId);
+      if (viewerPointers.size === 0) viewerStage.classList.remove('grabbing');
+    });
+  });
+
+  // Keep the image fitted correctly if the window or phone orientation changes
+  window.addEventListener('resize', () => {
+    if (views.viewer.classList.contains('active') && viewerState.natW) viewerFit();
+  });
 
   // --- Event Listeners ---
 
@@ -1083,14 +1351,8 @@
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = function (event) {
-      processAndPreviewImage(event.target.result, file.name);
-    };
-    reader.onerror = function () {
-      showStatus('Error reading image file from disk.', 'error');
-    };
-    reader.readAsDataURL(file);
+    // File is already a Blob; pass directly (no FileReader/base64 needed)
+    processAndPreviewImage(file, file.name);
   });
 
   // Step 2: Drag and drop support on drop zone
@@ -1133,14 +1395,8 @@
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = function (event) {
-      processAndPreviewImage(event.target.result, file.name);
-    };
-    reader.onerror = function () {
-      showStatus('Error reading dropped image file.', 'error');
-    };
-    reader.readAsDataURL(file);
+    // File is already a Blob; pass directly (no FileReader/base64 needed)
+    processAndPreviewImage(file, file.name);
   });
 
   // Step 2: Retake and Save Original Actions

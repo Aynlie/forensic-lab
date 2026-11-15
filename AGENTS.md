@@ -73,8 +73,8 @@ Dashboard with "New Examination" and "Saved Samples". Subject and Sample form wi
 **Step 2 — Mode selection and image capture/upload** — NEEDS TESTING
 Mode selection (Regular / Microscopic) shown after confirmation. Camera capture via the browser, gallery upload, preview, retake, and basic image quality check. Camera permission error handling. Positioning instructions. Original image saved separately.
 
-**Step 3 — Image viewer, zoom, crop** — NOT STARTED
-Zoom and pan. Crop saved as a separate copy. Originals untouched.
+**Step 3 — Image viewer, zoom/pan only (crop postponed)** — NEEDS TESTING
+Zoom and pan for saved original images (pinch, wheel, drag, Zoom In/Out/Reset buttons). Display only; stored originals are never modified. Crop is postponed unless time remains.
 
 **Step 4 — Calibration and measurement** — NOT STARTED
 Calibration: user marks two points on a known reference length, enters the real length and unit, app computes and saves pixels-per-unit. Measurement: two-point tap for hair length or shaft diameter. Unit conversion among µm, mm, cm, in. Clear "Calibrated measurement" vs "Estimate"/uncalibrated labeling.

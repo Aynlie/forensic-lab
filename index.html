@@ -340,7 +340,7 @@
             <h3>Original Images for This Sample</h3>
             <span class="rule-badge">Rule 10: Originals Preserved Untouched</span>
           </div>
-          <p class="section-lead">All original captures are permanently stored separately as raw evidence records.</p>
+          <p class="section-lead">All original captures are permanently stored separately as raw evidence records. Tap an image to open it in the viewer (zoom and pan).</p>
           <div id="originals-grid" class="originals-grid">
             <!-- Dynamically populated list of original images for this sample -->
           </div>
@@ -349,6 +349,31 @@
             <button type="button" id="btn-finish-to-samples" class="btn btn-secondary">View in Saved Samples &rarr;</button>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- 7. Image Viewer View (Step 3: zoom and pan only, display-only) -->
+    <section id="view-viewer" class="view" hidden>
+      <div class="card">
+        <div class="view-header">
+          <h2>Image Viewer</h2>
+          <button type="button" id="btn-viewer-back" class="btn btn-outline">&larr; Back to Images</button>
+        </div>
+
+        <div class="viewer-info" id="viewer-info"></div>
+
+        <div class="viewer-stage" id="viewer-stage">
+          <img id="viewer-image" alt="Original image being viewed" draggable="false">
+        </div>
+
+        <div class="viewer-toolbar">
+          <button type="button" id="btn-viewer-zoom-out" class="btn btn-secondary btn-sm">Zoom Out</button>
+          <span class="viewer-zoom-label" id="viewer-zoom-label">1.0x</span>
+          <button type="button" id="btn-viewer-zoom-in" class="btn btn-secondary btn-sm">Zoom In</button>
+          <button type="button" id="btn-viewer-reset" class="btn btn-outline btn-sm">Reset</button>
+        </div>
+
+        <p class="viewer-note">Drag to pan. Pinch or use the mouse wheel to zoom. Zoom and pan change the display only; the stored original image is never modified.</p>
       </div>
     </section>
   </div>
