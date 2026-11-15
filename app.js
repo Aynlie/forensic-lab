@@ -4,6 +4,7 @@
  * Step 2: Mode Selection, Camera/Upload Image Capture & Basic Quality Check
  * Step 3: Image Viewer (zoom and pan only, display-only; crop postponed)
  * Step 4A: Calibration inside Image Viewer (two-point reference calibration)
+ * Step 4B: Measurements inside Image Viewer (two-point length & shaft diameter)
  * Pure Vanilla JavaScript - No external libraries
  */
 
@@ -986,9 +987,10 @@
       });
   }
 
-  // --- Step 3: Image Viewer & Step 4A: Calibration inside Viewer ---
+  // --- Step 3: Image Viewer, Step 4A: Calibration & Step 4B: Measurements ---
   // The viewer displays a stored original image without modifying the image Blob (Rule 10).
   // Calibration records the physical scale (pixelsPerMicrometer) on each original image's record.
+  // Measurements record morphological dimensions (hair length & shaft diameter) with calibration snapshots.
 
   const viewerStage = document.getElementById('viewer-stage');
   const viewerImage = document.getElementById('viewer-image');
@@ -1000,6 +1002,7 @@
   const btnViewerZoomOut = document.getElementById('btn-viewer-zoom-out');
   const btnViewerReset = document.getElementById('btn-viewer-reset');
   const btnViewerCalibrate = document.getElementById('btn-viewer-calibrate');
+  const btnViewerMeasure = document.getElementById('btn-viewer-measure');
 
   // Calibration status and action elements
   const calibrationStatusCard = document.getElementById('calibration-status-card');
@@ -1033,6 +1036,29 @@
   const btnCancelCopy = document.getElementById('btn-cancel-copy');
   const btnConfirmCopy = document.getElementById('btn-confirm-copy');
 
+  // Step 4B: Measurement interactive prompt elements
+  const measurePromptBanner = document.getElementById('measure-prompt-banner');
+  const measurePromptStep = document.getElementById('measure-prompt-step');
+  const btnResetMeasPoints = document.getElementById('btn-reset-meas-points');
+  const btnCancelMeasure = document.getElementById('btn-cancel-measure');
+
+  // Step 4B: Measurement form elements
+  const measurementForm = document.getElementById('measurement-form');
+  const formMeasureLabelPill = document.getElementById('form-measure-label-pill');
+  const measureTypeSelect = document.getElementById('measure-type');
+  const measureUnitGroup = document.getElementById('measure-unit-group');
+  const measureDisplayUnitSelect = document.getElementById('measure-display-unit');
+  const measureValMain = document.getElementById('measure-val-main');
+  const measureValSub = document.getElementById('measure-val-sub');
+  const measureNoteInput = document.getElementById('measure-note');
+  const btnCancelMeasForm = document.getElementById('btn-cancel-meas-form');
+  const btnRetapMeasPoints = document.getElementById('btn-retap-meas-points');
+
+  // Step 4B: Measurements list card elements
+  const measurementsCard = document.getElementById('measurements-card');
+  const measurementsCountBadge = document.getElementById('measurements-count-badge');
+  const measurementsListContainer = document.getElementById('measurements-list-container');
+
   const VIEWER_MAX_SCALE = 8;     // up to 8 screen pixels per image pixel
   const VIEWER_BUTTON_STEP = 1.5; // zoom factor for the Zoom In / Zoom Out buttons
   const VIEWER_WHEEL_STEP = 1.15; // zoom factor per mouse wheel notch
@@ -1041,8 +1067,14 @@
   let pinchOccurredInViewer = false;
 
   const calibrationState = {
-    isCalibrating: false, // true when user is placing points
+    isCalibrating: false, // true when user is placing calibration points
     points: []            // points in original natural image pixel coordinates: [{ x, y }]
+  };
+
+  const measurementState = {
+    isMeasuring: false, // true when user is placing measurement points
+    points: [],         // points in original natural image pixel coordinates: [{ x, y }]
+    currentDist: 0      // measured pixel distance between points
   };
 
   // State object mapping screen points to image pixels
@@ -1111,61 +1143,158 @@
     };
   }
 
+  /** Sensible rounding for hair measurement values according to unit. */
+  function formatMeasurementValue(value, unit) {
+    if (value == null || isNaN(value)) return '0';
+    if (unit === 'um') {
+      if (value >= 1000) return value.toFixed(1);
+      if (value >= 10) return value.toFixed(2);
+      if (value >= 1) return value.toFixed(2);
+      return value.toFixed(3);
+    }
+    if (unit === 'mm') {
+      if (value >= 100) return value.toFixed(1);
+      if (value >= 1) return value.toFixed(2);
+      return value.toFixed(3);
+    }
+    if (unit === 'cm') {
+      if (value >= 10) return value.toFixed(2);
+      return value.toFixed(3);
+    }
+    if (unit === 'in') {
+      if (value >= 10) return value.toFixed(2);
+      return value.toFixed(3);
+    }
+    return value.toFixed(1);
+  }
+
   /**
-   * Renders calibration points and line onto the SVG overlay.
-   * Coordinate transformation: stageX = tx + imgX * scale; stageY = ty + imgY * scale.
+   * Renders overlay lines and markers onto the SVG overlay.
    * Visual markers and line thickness stay at constant screen size during zoom/pan.
+   * Renders:
+   * 1. Saved measurements for the open image (emerald for calibrated, amber for estimate)
+   * 2. In-progress measurement points and line
+   * 3. Calibration reference points and line
    */
   function renderViewerOverlay() {
     if (!viewerOverlay) return;
 
-    const points = calibrationState.points;
-    if (!points || points.length === 0) {
-      viewerOverlay.innerHTML = '';
-      return;
-    }
-
     const sw = viewerStage.clientWidth;
     const sh = viewerStage.clientHeight;
+    if (!sw || !sh) return;
     viewerOverlay.setAttribute('viewBox', '0 0 ' + sw + ' ' + sh);
-
-    const screenPts = points.map((pt) => ({
-      sx: viewerState.tx + pt.x * viewerState.scale,
-      sy: viewerState.ty + pt.y * viewerState.scale
-    }));
 
     let svgHtml = '';
 
-    // If two points exist, draw the connecting reference line
-    if (screenPts.length === 2) {
-      const p1 = screenPts[0];
-      const p2 = screenPts[1];
-      // Dark halo for contrast against light specimen fields
-      svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />';
-      // High-contrast bright dashed reference line
-      svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-dasharray="5,3" />';
+    // 1. Saved measurements for the open original image
+    if (activeSample && Array.isArray(activeSample.measurements) && currentViewerOrigIndex >= 0) {
+      const orig = activeSample.images && activeSample.images.originals ? activeSample.images.originals[currentViewerOrigIndex] : null;
+      if (orig) {
+        const imageMeasurements = activeSample.measurements.filter((m) => m.imageId === orig.id);
+        imageMeasurements.forEach((m) => {
+          if (!Array.isArray(m.points) || m.points.length !== 2) return;
+          const s1x = viewerState.tx + m.points[0].x * viewerState.scale;
+          const s1y = viewerState.ty + m.points[0].y * viewerState.scale;
+          const s2x = viewerState.tx + m.points[1].x * viewerState.scale;
+          const s2y = viewerState.ty + m.points[1].y * viewerState.scale;
+
+          const isCalibrated = m.valueUm !== null;
+          const strokeColor = isCalibrated ? '#10b981' : '#f59e0b';
+          const dashAttr = isCalibrated ? '' : 'stroke-dasharray="4,2"';
+
+          // Dark halo shadow for universal contrast
+          svgHtml += '<line x1="' + s1x + '" y1="' + s1y + '" x2="' + s2x + '" y2="' + s2y + '" stroke="#0f172a" stroke-width="4" stroke-linecap="round" opacity="0.75" />';
+          // Main measurement line
+          svgHtml += '<line x1="' + s1x + '" y1="' + s1y + '" x2="' + s2x + '" y2="' + s2y + '" stroke="' + strokeColor + '" stroke-width="2" stroke-linecap="round" ' + dashAttr + ' />';
+
+          // Terminal endpoints
+          svgHtml += '<circle cx="' + s1x + '" cy="' + s1y + '" r="3.5" fill="' + strokeColor + '" stroke="#ffffff" stroke-width="1"/>';
+          svgHtml += '<circle cx="' + s2x + '" cy="' + s2y + '" r="3.5" fill="' + strokeColor + '" stroke="#ffffff" stroke-width="1"/>';
+
+          // Midpoint badge
+          const mx = (s1x + s2x) / 2;
+          const my = (s1y + s2y) / 2;
+          const shortType = m.type === 'Shaft diameter' ? 'Dia' : 'Len';
+          let labelText = '';
+
+          if (isCalibrated) {
+            let val = m.valueUm;
+            if (m.displayUnit === 'mm') val = m.valueUm / 1000;
+            else if (m.displayUnit === 'cm') val = m.valueUm / 10000;
+            else if (m.displayUnit === 'in') val = m.valueUm / 25400;
+            const sym = m.displayUnit === 'um' ? 'µm' : m.displayUnit;
+            labelText = shortType + ': ' + formatMeasurementValue(val, m.displayUnit) + ' ' + sym;
+          } else {
+            labelText = shortType + ': ' + m.pixelDistance.toFixed(1) + ' px';
+          }
+
+          const badgeWidth = labelText.length * 6.5 + 10;
+          svgHtml += '<rect x="' + (mx - badgeWidth / 2) + '" y="' + (my - 16) + '" width="' + badgeWidth + '" height="14" rx="3" fill="#0f172a" opacity="0.85" stroke="#ffffff" stroke-width="0.5"/>';
+          svgHtml += '<text x="' + mx + '" y="' + (my - 6) + '" fill="#ffffff" font-size="9" font-family="sans-serif" font-weight="bold" text-anchor="middle">' + escapeHtml(labelText) + '</text>';
+        });
+      }
     }
 
-    // Draw markers for each point (constant screen size)
-    screenPts.forEach((pt, index) => {
-      const num = index + 1;
-      // Dark outer shadow
-      svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="9" fill="#0f172a" opacity="0.6" />';
-      // Contrasting colored ring
-      svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="7" fill="#1e3a8a" stroke="#ffffff" stroke-width="1.5" />';
-      // Center dot
-      svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="2" fill="#38bdf8" />';
-      // Crosshair guide ticks
-      svgHtml += '<line x1="' + (pt.sx - 13) + '" y1="' + pt.sy + '" x2="' + (pt.sx - 9) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
-      svgHtml += '<line x1="' + (pt.sx + 9) + '" y1="' + pt.sy + '" x2="' + (pt.sx + 13) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
-      svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy - 13) + '" x2="' + pt.sx + '" y2="' + (pt.sy - 9) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
-      svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy + 9) + '" x2="' + pt.sx + '" y2="' + (pt.sy + 13) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
-      // Marker label badge
-      const badgeX = pt.sx + 12;
-      const badgeY = pt.sy - 10;
-      svgHtml += '<rect x="' + badgeX + '" y="' + badgeY + '" width="16" height="15" rx="3" fill="#1e3a8a" stroke="#ffffff" stroke-width="1"/>';
-      svgHtml += '<text x="' + (badgeX + 8) + '" y="' + (badgeY + 11) + '" fill="#ffffff" font-size="10" font-family="sans-serif" font-weight="bold" text-anchor="middle">' + num + '</text>';
-    });
+    // 2. In-progress measurement points
+    if (measurementState.points && measurementState.points.length > 0) {
+      const screenMeasPts = measurementState.points.map((pt) => ({
+        sx: viewerState.tx + pt.x * viewerState.scale,
+        sy: viewerState.ty + pt.y * viewerState.scale
+      }));
+
+      if (screenMeasPts.length === 2) {
+        const p1 = screenMeasPts[0];
+        const p2 = screenMeasPts[1];
+        svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-dasharray="4,2" />';
+      }
+
+      screenMeasPts.forEach((pt, index) => {
+        const tag = 'M' + (index + 1);
+        svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="9" fill="#0f172a" opacity="0.6" />';
+        svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="7" fill="#059669" stroke="#ffffff" stroke-width="1.5" />';
+        svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="2" fill="#a7f3d0" />';
+        svgHtml += '<line x1="' + (pt.sx - 13) + '" y1="' + pt.sy + '" x2="' + (pt.sx - 9) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + (pt.sx + 9) + '" y1="' + pt.sy + '" x2="' + (pt.sx + 13) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy - 13) + '" x2="' + pt.sx + '" y2="' + (pt.sy - 9) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy + 9) + '" x2="' + pt.sx + '" y2="' + (pt.sy + 13) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        const badgeX = pt.sx + 12;
+        const badgeY = pt.sy - 10;
+        svgHtml += '<rect x="' + badgeX + '" y="' + badgeY + '" width="22" height="15" rx="3" fill="#059669" stroke="#ffffff" stroke-width="1"/>';
+        svgHtml += '<text x="' + (badgeX + 11) + '" y="' + (badgeY + 11) + '" fill="#ffffff" font-size="10" font-family="sans-serif" font-weight="bold" text-anchor="middle">' + tag + '</text>';
+      });
+    }
+
+    // 3. Calibration points and reference line
+    const calPoints = calibrationState.points;
+    if (calPoints && calPoints.length > 0) {
+      const screenPts = calPoints.map((pt) => ({
+        sx: viewerState.tx + pt.x * viewerState.scale,
+        sy: viewerState.ty + pt.y * viewerState.scale
+      }));
+
+      if (screenPts.length === 2) {
+        const p1 = screenPts[0];
+        const p2 = screenPts[1];
+        svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + p1.sx + '" y1="' + p1.sy + '" x2="' + p2.sx + '" y2="' + p2.sy + '" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-dasharray="5,3" />';
+      }
+
+      screenPts.forEach((pt, index) => {
+        const num = index + 1;
+        svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="9" fill="#0f172a" opacity="0.6" />';
+        svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="7" fill="#1e3a8a" stroke="#ffffff" stroke-width="1.5" />';
+        svgHtml += '<circle cx="' + pt.sx + '" cy="' + pt.sy + '" r="2" fill="#38bdf8" />';
+        svgHtml += '<line x1="' + (pt.sx - 13) + '" y1="' + pt.sy + '" x2="' + (pt.sx - 9) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + (pt.sx + 9) + '" y1="' + pt.sy + '" x2="' + (pt.sx + 13) + '" y2="' + pt.sy + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy - 13) + '" x2="' + pt.sx + '" y2="' + (pt.sy - 9) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        svgHtml += '<line x1="' + pt.sx + '" y1="' + (pt.sy + 9) + '" x2="' + pt.sx + '" y2="' + (pt.sy + 13) + '" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />';
+        const badgeX = pt.sx + 12;
+        const badgeY = pt.sy - 10;
+        svgHtml += '<rect x="' + badgeX + '" y="' + badgeY + '" width="16" height="15" rx="3" fill="#1e3a8a" stroke="#ffffff" stroke-width="1"/>';
+        svgHtml += '<text x="' + (badgeX + 8) + '" y="' + (badgeY + 11) + '" fill="#ffffff" font-size="10" font-family="sans-serif" font-weight="bold" text-anchor="middle">' + num + '</text>';
+      });
+    }
 
     viewerOverlay.innerHTML = svgHtml;
   }
@@ -1190,6 +1319,14 @@
 
   function hideCopyPanel() {
     if (copyCalibrationPanel) copyCalibrationPanel.hidden = true;
+  }
+
+  function hideMeasurePrompt() {
+    if (measurePromptBanner) measurePromptBanner.hidden = true;
+  }
+
+  function hideMeasurementForm() {
+    if (measurementForm) measurementForm.hidden = true;
   }
 
   /** Updates the calibration status bar, labels, and action button visibility in the viewer. */
@@ -1241,6 +1378,9 @@
   /** Initiates two-point calibration mode. */
   function startCalibrationMode() {
     if (currentViewerOrigIndex < 0) return;
+    if (measurementState.isMeasuring) {
+      cancelMeasureMode();
+    }
     calibrationState.isCalibrating = true;
     calibrationState.points = [];
     viewerStage.classList.add('calibrating-mode');
@@ -1385,6 +1525,211 @@
     copyCalibrationPanel.hidden = false;
   }
 
+  // --- Step 4B: Measurement Functions ---
+
+  /** Initiates two-point measurement mode. */
+  function startMeasureMode() {
+    if (currentViewerOrigIndex < 0) return;
+    if (calibrationState.isCalibrating) {
+      cancelCalibrationMode();
+    }
+    measurementState.isMeasuring = true;
+    measurementState.points = [];
+    viewerStage.classList.add('measuring-mode');
+
+    hideMeasurementForm();
+    hideMeasurePrompt();
+    renderViewerOverlay();
+
+    measurePromptStep.textContent = 'Tap first point to measure (0/2 points placed).';
+    btnResetMeasPoints.hidden = true;
+    measurePromptBanner.hidden = false;
+    showStatus('Measurement active: Tap two points to measure hair dimensions.', 'info');
+  }
+
+  /** Cancels two-point measurement mode. */
+  function cancelMeasureMode() {
+    measurementState.isMeasuring = false;
+    measurementState.points = [];
+    viewerStage.classList.remove('measuring-mode');
+    hideMeasurePrompt();
+    hideMeasurementForm();
+    renderViewerOverlay();
+    showStatus('Measurement cancelled.', 'info');
+  }
+
+  /** Handles tap on the viewer stage in measure mode, converting to image pixels. */
+  function handleMeasureTap(clientX, clientY) {
+    if (!measurementState.isMeasuring) return;
+    if (!viewerState.natW || !viewerState.natH) return;
+
+    const rect = viewerStage.getBoundingClientRect();
+    const stageX = clientX - rect.left;
+    const stageY = clientY - rect.top;
+
+    const imgX = (stageX - viewerState.tx) / viewerState.scale;
+    const imgY = (stageY - viewerState.ty) / viewerState.scale;
+
+    // Validate bounds
+    if (imgX < 0 || imgX > viewerState.natW || imgY < 0 || imgY > viewerState.natH) {
+      showStatus('Tap landed outside the image area. Please tap inside the image.', 'error');
+      return;
+    }
+
+    if (measurementState.points.length === 0) {
+      // First point
+      measurementState.points.push({ x: imgX, y: imgY });
+      renderViewerOverlay();
+      measurePromptStep.textContent = 'Point 1 placed at (' + Math.round(imgX) + ', ' + Math.round(imgY) + ' px). Tap second point (1/2 placed).';
+      btnResetMeasPoints.hidden = false;
+      showStatus('Point 1 marked. Now tap the second measurement point.', 'success');
+    } else if (measurementState.points.length === 1) {
+      // Second point
+      const p1 = measurementState.points[0];
+      const p2 = { x: imgX, y: imgY };
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+      // Rule 2: Reject points under 3 px apart
+      if (dist < 3) {
+        showStatus('Points are too close (' + dist.toFixed(1) + ' px apart). Must be at least 3 px apart. Please tap the second point again.', 'error');
+        return;
+      }
+
+      measurementState.points.push(p2);
+      renderViewerOverlay();
+
+      // Exit point placement mode
+      measurementState.isMeasuring = false;
+      viewerStage.classList.remove('measuring-mode');
+      hideMeasurePrompt();
+
+      // Open measurement details form
+      openMeasurementForm(dist);
+    }
+  }
+
+  /** Shows the measurement data input form after 2 points are placed. */
+  function openMeasurementForm(dist) {
+    measurementState.currentDist = dist;
+    measureNoteInput.value = '';
+
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    const isCalibrated = !!(orig && orig.calibration && orig.calibration.pixelsPerMicrometer > 0);
+
+    if (isCalibrated) {
+      // Rule 4: Calibrated measurement
+      formMeasureLabelPill.textContent = 'Calibrated measurement';
+      formMeasureLabelPill.className = 'measure-label-pill calibrated';
+      measureUnitGroup.hidden = false;
+
+      // Smart default unit: if micro, 'um'; if regular, 'mm'
+      if (orig.mode === 'microscopic') {
+        measureDisplayUnitSelect.value = 'um';
+      } else {
+        measureDisplayUnitSelect.value = 'mm';
+      }
+      updateMeasurementFormValues();
+    } else {
+      // Rule 3: If image has NO calibration, show in pixels only labeled "Estimate (uncalibrated, pixels only)"
+      // Never show um/mm/cm/in for it.
+      formMeasureLabelPill.textContent = 'Estimate (uncalibrated, pixels only)';
+      formMeasureLabelPill.className = 'measure-label-pill estimate';
+      measureUnitGroup.hidden = true;
+      measureValMain.textContent = dist.toFixed(2) + ' px';
+      measureValSub.textContent = 'Uncalibrated image: measurement recorded in pixels only.';
+    }
+
+    measurementForm.hidden = false;
+    measureTypeSelect.focus();
+  }
+
+  /** Updates displayed value and unit in the measurement form instantly. */
+  function updateMeasurementFormValues() {
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    if (!orig || !orig.calibration || !orig.calibration.pixelsPerMicrometer) return;
+
+    const ppm = orig.calibration.pixelsPerMicrometer;
+    const valueUm = measurementState.currentDist / ppm;
+    const unit = measureDisplayUnitSelect.value;
+
+    let convertedVal = valueUm;
+    if (unit === 'mm') convertedVal = valueUm / 1000;
+    else if (unit === 'cm') convertedVal = valueUm / 10000;
+    else if (unit === 'in') convertedVal = valueUm / 25400;
+
+    const unitSymbol = unit === 'um' ? 'µm' : unit;
+    measureValMain.textContent = formatMeasurementValue(convertedVal, unit) + ' ' + unitSymbol;
+    measureValSub.textContent = 'Pixel distance: ' + measurementState.currentDist.toFixed(2) + ' px (1 px = ' + formatUmPerPixel(ppm) + ' um)';
+  }
+
+  /** Renders the saved measurements list for the open image. */
+  function renderMeasurementsList() {
+    if (!measurementsListContainer) return;
+    if (currentViewerOrigIndex < 0 || !activeSample || !activeSample.images || !activeSample.images.originals) {
+      measurementsListContainer.innerHTML = '';
+      if (measurementsCountBadge) measurementsCountBadge.textContent = '0 recorded';
+      return;
+    }
+
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    if (!orig) return;
+
+    const allMeas = Array.isArray(activeSample.measurements) ? activeSample.measurements : [];
+    const imageMeasurements = allMeas.filter((m) => m.imageId === orig.id);
+
+    if (measurementsCountBadge) {
+      measurementsCountBadge.textContent = imageMeasurements.length + ' recorded';
+    }
+
+    if (imageMeasurements.length === 0) {
+      measurementsListContainer.innerHTML = '<p class="measurements-empty-msg">No measurements recorded for this image yet. Click "Measure" in the toolbar to measure hair features.</p>';
+      return;
+    }
+
+    let html = '';
+    imageMeasurements.forEach((m) => {
+      const modeText = m.imageMode === 'microscopic' ? 'Micro' : 'Regular';
+      const modeTagClass = m.imageMode === 'microscopic' ? 'tag-micro' : 'tag-regular';
+      const isCal = m.valueUm !== null;
+      const labelPillClass = isCal ? 'measure-label-pill calibrated' : 'measure-label-pill estimate';
+
+      let valueDisplay = '';
+      if (isCal) {
+        let val = m.valueUm;
+        if (m.displayUnit === 'mm') val = m.valueUm / 1000;
+        else if (m.displayUnit === 'cm') val = m.valueUm / 10000;
+        else if (m.displayUnit === 'in') val = m.valueUm / 25400;
+        const sym = m.displayUnit === 'um' ? 'µm' : m.displayUnit;
+        valueDisplay = '<strong>' + formatMeasurementValue(val, m.displayUnit) + ' ' + sym + '</strong> <span class="meas-pixels-text">(' + m.pixelDistance.toFixed(1) + ' px)</span>';
+      } else {
+        valueDisplay = '<strong>' + m.pixelDistance.toFixed(1) + ' px</strong>';
+      }
+
+      const timeStr = new Date(m.measuredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const noteHtml = m.note ? '<div class="meas-note-text">Note: ' + escapeHtml(m.note) + '</div>' : '';
+
+      html += `
+        <div class="measurement-item" data-meas-id="${escapeHtml(m.id)}">
+          <div class="meas-item-header">
+            <div class="meas-title-group">
+              <span class="meas-type-title">${escapeHtml(m.type)}</span>
+              <span class="mode-tag ${modeTagClass}">${modeText}</span>
+              <span class="${labelPillClass}">${escapeHtml(m.label)}</span>
+            </div>
+            <button type="button" class="btn btn-danger-outline btn-sm btn-delete-meas" data-meas-id="${escapeHtml(m.id)}" title="Delete this measurement">Delete</button>
+          </div>
+          <div class="meas-item-body">
+            <div class="meas-value-text">${valueDisplay}</div>
+            ${noteHtml}
+            <div class="meas-date-text">Recorded ${escapeHtml(timeStr)}</div>
+          </div>
+        </div>
+      `;
+    });
+
+    measurementsListContainer.innerHTML = html;
+  }
+
   /** Opens the viewer for the original image at the given index of the active sample. */
   function openImageViewer(index) {
     const originals = activeSample && activeSample.images ? activeSample.images.originals : null;
@@ -1400,12 +1745,17 @@
     viewerState.natW = 0;
     viewerState.natH = 0;
 
-    // Reset calibration interactive states
+    // Reset calibration and measurement interactive states
     calibrationState.isCalibrating = false;
+    measurementState.isMeasuring = false;
+    measurementState.points = [];
     viewerStage.classList.remove('calibrating-mode');
+    viewerStage.classList.remove('measuring-mode');
     hideCalibrationPrompt();
     hideCalibrationForm();
     hideCopyPanel();
+    hideMeasurePrompt();
+    hideMeasurementForm();
 
     // If this original already has two-point calibration points, load them for overlay
     if (orig.calibration && Array.isArray(orig.calibration.points) && orig.calibration.points.length === 2) {
@@ -1438,6 +1788,7 @@
         '<span>&bull;</span><span>' + viewerState.natW + 'x' + viewerState.natH + ' px</span>';
       viewerFit();
       updateViewerCalibrationUI();
+      renderMeasurementsList();
       renderViewerOverlay();
     };
     viewerImage.onerror = function () {
@@ -1463,10 +1814,15 @@
     currentViewerOrigIndex = -1;
     calibrationState.isCalibrating = false;
     calibrationState.points = [];
+    measurementState.isMeasuring = false;
+    measurementState.points = [];
     viewerStage.classList.remove('calibrating-mode');
+    viewerStage.classList.remove('measuring-mode');
     hideCalibrationPrompt();
     hideCalibrationForm();
     hideCopyPanel();
+    hideMeasurePrompt();
+    hideMeasurementForm();
     if (viewerOverlay) viewerOverlay.innerHTML = '';
     releaseViewerImage();
     viewerPointers.clear();
@@ -1607,6 +1963,7 @@
       return;
     }
 
+    // Rule 7: Existing measurements keep their own calibrationSnapshot; do not recompute them silently.
     orig.calibration = null;
     calibrationState.points = [];
     activeSample.updatedAt = new Date().toISOString();
@@ -1666,6 +2023,141 @@
       });
   });
 
+  // --- Step 4B: Measurement Event Listeners ---
+
+  btnViewerMeasure.addEventListener('click', startMeasureMode);
+  btnCancelMeasure.addEventListener('click', cancelMeasureMode);
+  btnCancelMeasForm.addEventListener('click', cancelMeasureMode);
+
+  btnResetMeasPoints.addEventListener('click', () => {
+    measurementState.points = [];
+    renderViewerOverlay();
+    measurePromptStep.textContent = 'Points reset. Tap first point to measure (0/2 points placed).';
+    btnResetMeasPoints.hidden = true;
+  });
+
+  btnRetapMeasPoints.addEventListener('click', startMeasureMode);
+
+  measureDisplayUnitSelect.addEventListener('change', () => {
+    updateMeasurementFormValues();
+  });
+
+  measureTypeSelect.addEventListener('change', () => {
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    if (orig && orig.calibration && orig.calibration.pixelsPerMicrometer > 0) {
+      if (measureTypeSelect.value === 'Shaft diameter' && orig.mode === 'microscopic') {
+        measureDisplayUnitSelect.value = 'um';
+      }
+      updateMeasurementFormValues();
+    }
+  });
+
+  // Save Measurement Submit Handler (Requirements 3, 4, 5, 9)
+  measurementForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (currentViewerOrigIndex < 0 || !activeSample) return;
+
+    if (measurementState.points.length < 2) {
+      showStatus('Measurement points missing. Please retap points.', 'error');
+      return;
+    }
+
+    const p1 = measurementState.points[0];
+    const p2 = measurementState.points[1];
+    const pixelDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+    if (pixelDist < 3) {
+      showStatus('Points are under 3 px apart. Measurement rejected.', 'error');
+      return;
+    }
+
+    const orig = activeSample.images.originals[currentViewerOrigIndex];
+    const isCalibrated = !!(orig && orig.calibration && orig.calibration.pixelsPerMicrometer > 0);
+
+    let valueUm = null;
+    let displayUnit = 'px';
+    let label = 'Estimate (uncalibrated, pixels only)';
+    let calibrationSnapshot = null;
+
+    if (isCalibrated) {
+      const ppm = orig.calibration.pixelsPerMicrometer;
+      valueUm = pixelDist / ppm;
+      displayUnit = measureDisplayUnitSelect.value;
+      label = 'Calibrated measurement';
+      calibrationSnapshot = {
+        pixelsPerMicrometer: ppm,
+        source: orig.calibration.source || 'two-point'
+      };
+    }
+
+    const measurementRecord = {
+      id: 'meas_' + Date.now() + '_' + Math.floor(1000 + Math.random() * 9000),
+      imageId: orig.id,
+      imageMode: orig.mode,
+      type: measureTypeSelect.value,
+      pixelDistance: parseFloat(pixelDist.toFixed(2)),
+      valueUm: valueUm !== null ? parseFloat(valueUm.toFixed(4)) : null,
+      displayUnit: displayUnit,
+      label: label,
+      note: measureNoteInput.value.trim(),
+      points: [
+        { x: parseFloat(p1.x.toFixed(1)), y: parseFloat(p1.y.toFixed(1)) },
+        { x: parseFloat(p2.x.toFixed(1)), y: parseFloat(p2.y.toFixed(1)) }
+      ],
+      calibrationSnapshot: calibrationSnapshot,
+      measuredAt: new Date().toISOString()
+    };
+
+    if (!Array.isArray(activeSample.measurements)) {
+      activeSample.measurements = [];
+    }
+    activeSample.measurements.push(measurementRecord);
+    activeSample.updatedAt = new Date().toISOString();
+
+    saveSampleToDB(activeSample)
+      .then(() => {
+        showStatus('Measurement saved: ' + measurementRecord.type + '.', 'success');
+        // Rule 9: Exit measure mode and hide prompt banner
+        measurementState.isMeasuring = false;
+        measurementState.points = [];
+        viewerStage.classList.remove('measuring-mode');
+        hideMeasurePrompt();
+        hideMeasurementForm();
+        renderMeasurementsList();
+        renderViewerOverlay();
+      })
+      .catch((err) => {
+        showStatus('Failed to persist measurement: ' + err.message, 'error');
+      });
+  });
+
+  // Delete measurement delegated click listener (Requirement 6)
+  measurementsListContainer.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-delete-meas');
+    if (!btn) return;
+    const measId = btn.getAttribute('data-meas-id');
+    if (!measId || !activeSample || !Array.isArray(activeSample.measurements)) return;
+
+    if (!window.confirm('Delete this measurement record?')) {
+      return;
+    }
+
+    const idx = activeSample.measurements.findIndex((m) => m.id === measId);
+    if (idx !== -1) {
+      activeSample.measurements.splice(idx, 1);
+      activeSample.updatedAt = new Date().toISOString();
+      saveSampleToDB(activeSample)
+        .then(() => {
+          showStatus('Measurement deleted.', 'info');
+          renderMeasurementsList();
+          renderViewerOverlay();
+        })
+        .catch((err) => {
+          showStatus('Failed to delete measurement: ' + err.message, 'error');
+        });
+    }
+  });
+
   // Mouse wheel zoom (around the cursor)
   viewerStage.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -1675,7 +2167,7 @@
   }, { passive: false });
 
   // Drag to pan (single pointer) and pinch to zoom (two pointers)
-  // In calibrate mode: movement under 6 px is treated as a tap (Rule 1)
+  // In calibrate or measure mode: movement under 6 px is treated as a tap (Rule 1)
   viewerStage.addEventListener('pointerdown', (e) => {
     viewerStage.setPointerCapture(e.pointerId);
     viewerPointers.set(e.pointerId, {
@@ -1702,12 +2194,14 @@
         p.maxMove = moveFromStart;
       }
 
-      // If calibrating, require >= 6px movement before dragging to pan (treat under 6px as tap)
-      if (calibrationState.isCalibrating && !p.isDrag) {
+      const isInteractiveMode = calibrationState.isCalibrating || measurementState.isMeasuring;
+
+      // If calibrating or measuring, require >= 6px movement before dragging to pan (treat under 6px as tap)
+      if (isInteractiveMode && !p.isDrag) {
         if (moveFromStart >= 6) {
           p.isDrag = true;
         }
-      } else if (!calibrationState.isCalibrating) {
+      } else if (!isInteractiveMode) {
         p.isDrag = true;
       }
 
@@ -1741,7 +2235,7 @@
     viewerStage.addEventListener(eventName, (e) => {
       const p = viewerPointers.get(e.pointerId);
       const wasTap = eventName === 'pointerup' &&
-                     calibrationState.isCalibrating &&
+                     (calibrationState.isCalibrating || measurementState.isMeasuring) &&
                      p &&
                      !p.isDrag &&
                      p.maxMove < 6 &&
@@ -1755,7 +2249,11 @@
       }
 
       if (wasTap) {
-        handleViewerTap(p.startX, p.startY);
+        if (calibrationState.isCalibrating) {
+          handleViewerTap(p.startX, p.startY);
+        } else if (measurementState.isMeasuring) {
+          handleMeasureTap(p.startX, p.startY);
+        }
       }
     });
   });

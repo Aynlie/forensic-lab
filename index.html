@@ -372,7 +372,8 @@
           <span class="viewer-zoom-label" id="viewer-zoom-label">1.0x</span>
           <button type="button" id="btn-viewer-zoom-in" class="btn btn-secondary btn-sm">Zoom In</button>
           <button type="button" id="btn-viewer-reset" class="btn btn-outline btn-sm">Reset</button>
-          <button type="button" id="btn-viewer-calibrate" class="btn btn-primary btn-sm">Calibrate</button>
+          <button type="button" id="btn-viewer-calibrate" class="btn btn-secondary btn-sm">Calibrate</button>
+          <button type="button" id="btn-viewer-measure" class="btn btn-primary btn-sm">Measure</button>
         </div>
 
         <!-- Calibration Status & Actions Bar (Step 4A) -->
@@ -462,6 +463,80 @@
             <button type="button" id="btn-cancel-copy" class="btn btn-secondary">Cancel</button>
             <button type="button" id="btn-confirm-copy" class="btn btn-primary">Confirm Copy</button>
           </div>
+        </div>
+
+        <!-- Measure Mode Active Banner (Step 4B) -->
+        <div id="measure-prompt-banner" class="measure-prompt-banner" hidden>
+          <div class="measure-prompt-content">
+            <span class="measure-prompt-step" id="measure-prompt-step">Tap first point to measure (0/2 points placed).</span>
+            <span class="measure-prompt-hint">Tap or click to place measurement endpoints. Drag to pan. Pinch or mouse wheel to zoom.</span>
+          </div>
+          <div class="measure-prompt-actions">
+            <button type="button" id="btn-reset-meas-points" class="btn btn-outline btn-sm" hidden>Reset Points</button>
+            <button type="button" id="btn-cancel-measure" class="btn btn-secondary btn-sm">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Measurement Form (appears after 2 points are placed) (Step 4B) -->
+        <form id="measurement-form" class="measurement-form-card" hidden novalidate>
+          <div class="measurement-form-header">
+            <h3>Record Hair Measurement</h3>
+            <span class="measure-label-pill" id="form-measure-label-pill">Calibrated measurement</span>
+          </div>
+          <p class="form-hint" id="measurement-form-hint">Record morphological dimensions using two-point measurement.</p>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="measure-type">Measurement Type <span class="required" aria-hidden="true">*</span></label>
+              <select id="measure-type" class="form-control">
+                <option value="Hair strand length">Hair strand length</option>
+                <option value="Shaft diameter">Shaft diameter</option>
+              </select>
+            </div>
+            <div class="form-group" id="measure-unit-group">
+              <label for="measure-display-unit">Display Unit <span class="required" aria-hidden="true">*</span></label>
+              <select id="measure-display-unit" class="form-control">
+                <option value="um">&micro;m (micrometers)</option>
+                <option value="mm">mm (millimeters)</option>
+                <option value="cm">cm (centimeters)</option>
+                <option value="in">in (inches)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Measured Value Display Box -->
+          <div class="measure-value-box" id="measure-value-box">
+            <div class="measure-val-main" id="measure-val-main">--</div>
+            <div class="measure-val-sub" id="measure-val-sub">Pixel distance: --</div>
+          </div>
+
+          <div class="form-group">
+            <label for="measure-note">Optional Note <span class="hint">(Optional)</span></label>
+            <input type="text" id="measure-note" class="form-control" autocomplete="off" placeholder="e.g., Proximal section, mid-shaft, or distal tip">
+          </div>
+
+          <div class="form-actions measurement-form-actions">
+            <button type="button" id="btn-cancel-meas-form" class="btn btn-secondary">Cancel</button>
+            <button type="button" id="btn-retap-meas-points" class="btn btn-outline">Retap Points</button>
+            <button type="submit" id="btn-save-measurement" class="btn btn-primary">Save Measurement</button>
+          </div>
+        </form>
+
+        <!-- Saved Measurements for this Image (Step 4B) -->
+        <div class="measurements-card" id="measurements-card">
+          <div class="measurements-header">
+            <h3>Measurements for This Image</h3>
+            <span class="measurements-count-badge" id="measurements-count-badge">0 recorded</span>
+          </div>
+
+          <div id="measurements-list-container" class="measurements-list-container">
+            <!-- Populated by JavaScript -->
+          </div>
+
+          <!-- Mandatory guidance note (Requirement 8) -->
+          <p class="measurements-guidance-note">
+            Hair length is a straight-line distance between two points. Measure shaft diameter perpendicular to the shaft.
+          </p>
         </div>
 
         <p class="viewer-note">Drag to pan. Pinch or use the mouse wheel to zoom. Zoom and pan change the display only; the stored original image is never modified.</p>
