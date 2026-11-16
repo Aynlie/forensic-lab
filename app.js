@@ -1066,6 +1066,9 @@
   let currentViewerOrigIndex = -1; // index of currently open original in activeSample.images.originals
   let pinchOccurredInViewer = false;
 
+  // Rule: Only one tool mode can be active at a time ('none' | 'calibrate' | 'measure')
+  let activeViewerTool = 'none';
+
   const calibrationState = {
     isCalibrating: false, // true when user is placing calibration points
     points: []            // points in original natural image pixel coordinates: [{ x, y }]
@@ -1378,9 +1381,10 @@
   /** Initiates two-point calibration mode. */
   function startCalibrationMode() {
     if (currentViewerOrigIndex < 0) return;
-    if (measurementState.isMeasuring) {
-      cancelMeasureMode();
-    }
+    // Rule 1: Only one tool mode can be active at a time; entering calibrate cancels measure
+    cancelMeasureMode(false);
+
+    activeViewerTool = 'calibrate';
     calibrationState.isCalibrating = true;
     calibrationState.points = [];
     viewerStage.classList.add('calibrating-mode');
@@ -1395,30 +1399,26 @@
     showStatus('Calibration active: Tap first point along a known reference scale.', 'info');
   }
 
-  /** Cancels two-point calibration mode and restores any existing calibration overlay. */
-  function cancelCalibrationMode() {
+  /** Cancels two-point calibration mode, clears pending points, and hides banners/forms. */
+  function cancelCalibrationMode(showMsg = true) {
+    activeViewerTool = 'none';
     calibrationState.isCalibrating = false;
+    calibrationState.points = [];
     viewerStage.classList.remove('calibrating-mode');
     hideCalibrationPrompt();
     hideCalibrationForm();
-
-    const orig = activeSample.images.originals[currentViewerOrigIndex];
-    if (orig && orig.calibration && Array.isArray(orig.calibration.points)) {
-      calibrationState.points = [
-        { x: orig.calibration.points[0].x, y: orig.calibration.points[0].y },
-        { x: orig.calibration.points[1].x, y: orig.calibration.points[1].y }
-      ];
-    } else {
-      calibrationState.points = [];
-    }
+    hideCopyPanel();
     renderViewerOverlay();
-    showStatus('Calibration cancelled.', 'info');
+    if (showMsg) {
+      showStatus('Calibration cancelled.', 'info');
+    }
   }
 
   /** Handles tap on the viewer stage in calibrate mode, converting to image pixels. */
   function handleViewerTap(clientX, clientY) {
-    if (!calibrationState.isCalibrating) return;
+    if (activeViewerTool !== 'calibrate') return;
     if (!viewerState.natW || !viewerState.natH) return;
+    if (calibrationState.points.length >= 2) return;
 
     const rect = viewerStage.getBoundingClientRect();
     const stageX = clientX - rect.left;
@@ -1498,6 +1498,8 @@
 
   /** Opens the copy calibration panel allowing student to copy scale from another original. */
   function openCopyCalibrationPanel() {
+    if (activeViewerTool === 'calibrate') cancelCalibrationMode(false);
+    if (activeViewerTool === 'measure') cancelMeasureMode(false);
     copyCalibrationSource.innerHTML = '';
     const originals = activeSample.images.originals;
     const available = [];
@@ -1530,9 +1532,10 @@
   /** Initiates two-point measurement mode. */
   function startMeasureMode() {
     if (currentViewerOrigIndex < 0) return;
-    if (calibrationState.isCalibrating) {
-      cancelCalibrationMode();
-    }
+    // Rule 1: Only one tool mode can be active at a time; entering measure cancels calibrate
+    cancelCalibrationMode(false);
+
+    activeViewerTool = 'measure';
     measurementState.isMeasuring = true;
     measurementState.points = [];
     viewerStage.classList.add('measuring-mode');
@@ -1547,21 +1550,25 @@
     showStatus('Measurement active: Tap two points to measure hair dimensions.', 'info');
   }
 
-  /** Cancels two-point measurement mode. */
-  function cancelMeasureMode() {
+  /** Cancels two-point measurement mode, clears pending points, and hides banners/forms. */
+  function cancelMeasureMode(showMsg = true) {
+    activeViewerTool = 'none';
     measurementState.isMeasuring = false;
     measurementState.points = [];
     viewerStage.classList.remove('measuring-mode');
     hideMeasurePrompt();
     hideMeasurementForm();
     renderViewerOverlay();
-    showStatus('Measurement cancelled.', 'info');
+    if (showMsg) {
+      showStatus('Measurement cancelled.', 'info');
+    }
   }
 
   /** Handles tap on the viewer stage in measure mode, converting to image pixels. */
   function handleMeasureTap(clientX, clientY) {
-    if (!measurementState.isMeasuring) return;
+    if (activeViewerTool !== 'measure') return;
     if (!viewerState.natW || !viewerState.natH) return;
+    if (measurementState.points.length >= 2) return;
 
     const rect = viewerStage.getBoundingClientRect();
     const stageX = clientX - rect.left;
@@ -1745,8 +1752,10 @@
     viewerState.natW = 0;
     viewerState.natH = 0;
 
-    // Reset calibration and measurement interactive states
+    // Reset calibration and measurement interactive states (Rule 4)
+    activeViewerTool = 'none';
     calibrationState.isCalibrating = false;
+    calibrationState.points = [];
     measurementState.isMeasuring = false;
     measurementState.points = [];
     viewerStage.classList.remove('calibrating-mode');
@@ -1756,16 +1765,6 @@
     hideCopyPanel();
     hideMeasurePrompt();
     hideMeasurementForm();
-
-    // If this original already has two-point calibration points, load them for overlay
-    if (orig.calibration && Array.isArray(orig.calibration.points) && orig.calibration.points.length === 2) {
-      calibrationState.points = [
-        { x: orig.calibration.points[0].x, y: orig.calibration.points[0].y },
-        { x: orig.calibration.points[1].x, y: orig.calibration.points[1].y }
-      ];
-    } else {
-      calibrationState.points = [];
-    }
 
     const modeLabel = orig.mode === 'microscopic' ? 'Microscopic' : 'Regular';
     const baseInfo =
@@ -1812,6 +1811,7 @@
   /** Closes the viewer and returns to the capture view (image list). */
   function closeImageViewer() {
     currentViewerOrigIndex = -1;
+    activeViewerTool = 'none';
     calibrationState.isCalibrating = false;
     calibrationState.points = [];
     measurementState.isMeasuring = false;
@@ -1944,6 +1944,12 @@
     saveSampleToDB(activeSample)
       .then(() => {
         showStatus('Calibration saved successfully: 1 px = ' + formatUmPerPixel(pixelsPerMicrometer) + ' um.', 'success');
+        // Rule 2: Exit calibrate mode, hide banner, close form, and clear pending points
+        activeViewerTool = 'none';
+        calibrationState.isCalibrating = false;
+        calibrationState.points = [];
+        viewerStage.classList.remove('calibrating-mode');
+        hideCalibrationPrompt();
         hideCalibrationForm();
         updateViewerCalibrationUI();
         renderViewerOverlay();
@@ -1965,7 +1971,12 @@
 
     // Rule 7: Existing measurements keep their own calibrationSnapshot; do not recompute them silently.
     orig.calibration = null;
+    activeViewerTool = 'none';
+    calibrationState.isCalibrating = false;
     calibrationState.points = [];
+    viewerStage.classList.remove('calibrating-mode');
+    hideCalibrationPrompt();
+    hideCalibrationForm();
     activeSample.updatedAt = new Date().toISOString();
 
     saveSampleToDB(activeSample)
@@ -2008,6 +2019,8 @@
     };
 
     currentOrig.calibration = copiedCalibration;
+    activeViewerTool = 'none';
+    calibrationState.isCalibrating = false;
     calibrationState.points = []; // no points marked on this original
     activeSample.updatedAt = new Date().toISOString();
 
@@ -2117,7 +2130,8 @@
     saveSampleToDB(activeSample)
       .then(() => {
         showStatus('Measurement saved: ' + measurementRecord.type + '.', 'success');
-        // Rule 9: Exit measure mode and hide prompt banner
+        // Rule 3: Exit measure mode, hide banner, close form, and clear pending points
+        activeViewerTool = 'none';
         measurementState.isMeasuring = false;
         measurementState.points = [];
         viewerStage.classList.remove('measuring-mode');
@@ -2194,14 +2208,14 @@
         p.maxMove = moveFromStart;
       }
 
-      const isInteractiveMode = calibrationState.isCalibrating || measurementState.isMeasuring;
+      const isToolActive = activeViewerTool === 'calibrate' || activeViewerTool === 'measure';
 
       // If calibrating or measuring, require >= 6px movement before dragging to pan (treat under 6px as tap)
-      if (isInteractiveMode && !p.isDrag) {
+      if (isToolActive && !p.isDrag) {
         if (moveFromStart >= 6) {
           p.isDrag = true;
         }
-      } else if (!isInteractiveMode) {
+      } else if (!isToolActive) {
         p.isDrag = true;
       }
 
@@ -2234,8 +2248,9 @@
   ['pointerup', 'pointercancel'].forEach((eventName) => {
     viewerStage.addEventListener(eventName, (e) => {
       const p = viewerPointers.get(e.pointerId);
+      // Rule 5: Send tap only to the active mode; do nothing if no mode is active
       const wasTap = eventName === 'pointerup' &&
-                     (calibrationState.isCalibrating || measurementState.isMeasuring) &&
+                     activeViewerTool !== 'none' &&
                      p &&
                      !p.isDrag &&
                      p.maxMove < 6 &&
@@ -2249,9 +2264,9 @@
       }
 
       if (wasTap) {
-        if (calibrationState.isCalibrating) {
+        if (activeViewerTool === 'calibrate') {
           handleViewerTap(p.startX, p.startY);
-        } else if (measurementState.isMeasuring) {
+        } else if (activeViewerTool === 'measure') {
           handleMeasureTap(p.startX, p.startY);
         }
       }

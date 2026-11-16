@@ -1531,7 +1531,8 @@ textarea.form-control {
   margin: 0;
 }
 
-/* Utility to toggle views */
+/* Universal hidden attribute rule ensuring display:flex elements hide properly */
+[hidden],
 .view[hidden] {
   display: none !important;
 }
